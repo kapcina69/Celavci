@@ -1,0 +1,3 @@
+description: ADC driver
+compatible: "microchip,mcp3562"
+include: spi-device.yaml

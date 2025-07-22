@@ -1,0 +1,2 @@
+microchip,mcp3562.yaml must be added to C:\ncs\v2.6.99-cs1\zephyr\dts\bindings\spi
+pwm-servo.yaml must be added to C:\ncs\v2.6.99-cs1\zephyr\dts\bindings\pwm
