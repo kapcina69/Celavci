@@ -1,7 +1,7 @@
 /* main.c - Application main entry point */
 
 /*
- * Copyright (c) 2015-2016 Intel Corporation
+ * Copyright (c) 2015-2023 Intel Corporation and Nordic Semiconductor ASA
  *
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -13,6 +13,11 @@
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/kernel.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/i2c.h>
+#include "impulse.h"
+#include "ble_nus.h"
+
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
@@ -22,111 +27,167 @@
 #include <zephyr/bluetooth/services/bas.h>
 #include <zephyr/bluetooth/services/hrs.h>
 
-static const struct bt_data ad[] = {
-	BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
-	BT_DATA_BYTES(BT_DATA_UUID16_ALL,
-		      BT_UUID_16_ENCODE(BT_UUID_HRS_VAL),
-		      BT_UUID_16_ENCODE(BT_UUID_BAS_VAL),
-		      BT_UUID_16_ENCODE(BT_UUID_DIS_VAL))
+
+
+
+/*DAC parameters*/
+#define DAC_ADDR 0x63
+const struct device *i2c_dev;
+
+
+
+
+
+
+
+/* LED definitions - now matching your DTS active-low configuration */
+static const struct gpio_dt_spec led0 = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
+static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
+
+
+// Bluetooth callback struktura (implementacija u ble_nus.c)
+static struct bt_conn_cb conn_callbacks = {
+    .connected = connected,
+    .disconnected = disconnected,
 };
 
-static void connected(struct bt_conn *conn, uint8_t err)
+// --- BT događaji ---
+void connected(struct bt_conn *conn, uint8_t err)
 {
-	if (err) {
-		printk("Connection failed (err 0x%02x)\n", err);
-	} else {
-		printk("Connected\n");
-	}
+    if (err) {
+        printk("BLE konekcija nije uspela (err %u)\n", err);
+    } else {
+        printk("BLE povezan\n");
+		gpio_pin_set_dt(&led0, 1);  // Uključi LED0 kada je povezan
+		
+    }
 }
 
-static void disconnected(struct bt_conn *conn, uint8_t reason)
+void disconnected(struct bt_conn *conn, uint8_t reason)
 {
-	printk("Disconnected (reason 0x%02x)\n", reason);
+    printk("BLE diskonektovan (razlog %u)\n", reason);
+	gpio_pin_set_dt(&led0, 0);  // Isključi LED0 kada je diskonektovan
 }
 
-BT_CONN_CB_DEFINE(conn_callbacks) = {
-	.connected = connected,
-	.disconnected = disconnected,
-};
 
-static void bt_ready(void)
+/* Initialize all GPIOs */
+static int init_gpios(void)
 {
-	int err;
+    int ret;
+    
+    /* Check if devices are ready */
+    if (!device_is_ready(pulse_cathode.port)) {
+        printk("Pulse cathode device not ready\n");
+        return -ENODEV;
+    }
+    if (!device_is_ready(pulse_anode.port)) {
+        printk("Pulse anode device not ready\n");
+        return -ENODEV;
+    }
+    if (!device_is_ready(dc_dc_en.port)) {
+        printk("DC-DC enable device not ready\n");
+        return -ENODEV;
+    }
 
-	printk("Bluetooth initialized\n");
+    /* Configure pins as outputs, starting inactive */
+    ret = gpio_pin_configure_dt(&pulse_cathode, GPIO_OUTPUT_INACTIVE);
+    if (ret < 0) {
+        printk("Failed to configure pulse cathode (err %d)\n", ret);
+        return ret;
+    }
 
-	err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
-	if (err) {
-		printk("Advertising failed to start (err %d)\n", err);
-		return;
-	}
+    ret = gpio_pin_configure_dt(&pulse_anode, GPIO_OUTPUT_INACTIVE);
+    if (ret < 0) {
+        printk("Failed to configure pulse anode (err %d)\n", ret);
+        return ret;
+    }
 
-	printk("Advertising successfully started\n");
+    ret = gpio_pin_configure_dt(&dc_dc_en, GPIO_OUTPUT_INACTIVE);
+    if (ret < 0) {
+        printk("Failed to configure DC-DC enable (err %d)\n", ret);
+        return ret;
+    }
+
+    return 0;
 }
 
-static void auth_cancel(struct bt_conn *conn)
+
+
+
+void dac_set_value(uint16_t value)
 {
-	char addr[BT_ADDR_LE_STR_LEN];
+    if (value > 0x03FF) {
+        value = 0x03FF;
+    }
 
-	bt_addr_le_to_str(bt_conn_get_dst(conn), addr, sizeof(addr));
+    uint8_t buffer[3];
+    buffer[0] = 0x40;
+    buffer[1] = (value >> 2) & 0xFF;
+    buffer[2] = (value & 0x03) << 6;
 
-	printk("Pairing cancelled: %s\n", addr);
-}
-
-static struct bt_conn_auth_cb auth_cb_display = {
-	.cancel = auth_cancel,
-};
-
-static void bas_notify(void)
-{
-	uint8_t battery_level = bt_bas_get_battery_level();
-
-	battery_level--;
-
-	if (!battery_level) {
-		battery_level = 100U;
-	}
-
-	bt_bas_set_battery_level(battery_level);
-}
-
-static void hrs_notify(void)
-{
-	static uint8_t heartrate = 90U;
-
-	/* Heartrate measurements simulation */
-	heartrate++;
-	if (heartrate == 160U) {
-		heartrate = 90U;
-	}
-
-	bt_hrs_notify(heartrate);
+    int ret = i2c_write(i2c_dev, buffer, sizeof(buffer), DAC_ADDR);
+    if (ret < 0) {
+        printk("DAC slanje greska: %d\n", ret);
+    } else {
+        printk("DAC postavljen na: %u\n", value);
+    }
 }
 
 void main(void)
 {
-	int err;
+    int err;
 
-	err = bt_enable(NULL);
-	if (err) {
-		printk("Bluetooth init failed (err %d)\n", err);
-		return;
-	}
+    /* Initialize LEDs - with proper active-low handling */
+    if (!device_is_ready(led0.port)) {
+        printk("LED0 device not ready\n");
+        return;
+    }
+    if (!device_is_ready(led1.port)) {
+        printk("LED1 device not ready\n");
+        return;
+    }
 
-	bt_ready();
+    if (gpio_pin_configure_dt(&led0, GPIO_OUTPUT_INACTIVE) < 0 ||
+        gpio_pin_configure_dt(&led1, GPIO_OUTPUT_INACTIVE) < 0) {
+        printk("Failed to configure LEDs\n");
+        return;
+    }
 
-	bt_conn_auth_cb_register(&auth_cb_display);
+	if (init_gpios() != 0) {
+        printk("GPIO initialization failed!\n");
+        return;
+    }
+    i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c0));
+    if (!device_is_ready(i2c_dev)) {
+        printk("I2C nije spreman!\n");
+        return;
+    }
 
-	/* Implement notification. At the moment there is no suitable way
-	 * of starting delayed work so we do it here
-	 */
-	while (1) {
-		k_sleep(K_SECONDS(1));
+    /* Enable DC-DC converter */
+    gpio_pin_set_dt(&dc_dc_en, 1);
+    printk("DC-DC converter enabled\n");
 
-		/* Heartrate measurements simulation */
-		hrs_notify();
+    k_sleep(K_MSEC(100));
 
-		/* Battery level simulation */
-		bas_notify();
-	}
+
+    // Inicijalizuj BLE (NUS servis, advertising, itd.)
+    int errbt = ble_nus_init();
+    if (errbt) {
+        return -1;
+    }
+
+    // Registruj BLE konekcione callback-ove
+    bt_conn_cb_register(&conn_callbacks);
+
+    /* Main loop */
+    while (1) {
+        generate_pulse_sequence();        
+        static bool led1_state = false;
+        gpio_pin_set_dt(&led1, led1_state ? 1 : 0);
+        led1_state = !led1_state;
+		dac_set_value(30*amplitude);
+
+
+
+    }
 }

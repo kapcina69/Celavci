@@ -1,0 +1,121 @@
+// Copyright (c) 2023 Nordic Semiconductor ASA
+// SPDX-License-Identifier: Apache-2.0
+
+/dts-v1/;
+#include <nordic/nrf52840_qiaa.dtsi>
+
+/ {
+    model = "myModule";
+    compatible = "mymodule";
+
+    chosen {
+        zephyr,sram = &sram0;
+        zephyr,flash = &flash0;
+        zephyr,code-partition = &slot0_partition;
+
+    };
+
+    leds {
+        compatible = "gpio-leds";
+        led0: led_0 {
+            gpios = <&gpio0 2 GPIO_ACTIVE_LOW>;
+            label = "Green LED 0";
+        };
+        led1: led_1 {
+            gpios = <&gpio0 3 GPIO_ACTIVE_LOW>;
+            label = "Green LED 1";
+        };
+    };
+
+    /* Custom GPIO definitions */
+    custom_gpios {
+        compatible = "gpio-keys";
+        pulse_cathode: pulse_cathode {
+            gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
+            label = "Pulse cathode";
+        };
+        pulse_anode: pulse_anode {
+            gpios = <&gpio0 15 GPIO_ACTIVE_HIGH>;
+            label = "Pulse anode";
+        };
+        dc_dc_en: dc_dc_en {
+            gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>;
+            label = "DC-DC enable";
+        };
+    };
+
+    aliases {
+        led0 = &led0;
+        led1 = &led1;
+        pulse-cathode = &pulse_cathode;
+        pulse-anode = &pulse_anode;
+        dc-dc-en = &dc_dc_en;
+        i2c0 = &i2c0;
+        
+    };
+};
+
+&pinctrl {
+    i2c0_default: i2c0_default {
+        group1 {
+            psels = <NRF_PSEL(TWIM_SDA, 0, 26)>,
+                    <NRF_PSEL(TWIM_SCL, 0, 27)>;
+        };
+    };
+
+
+};
+
+
+
+&i2c0 {
+    compatible = "nordic,nrf-twim";
+    status = "okay";
+    pinctrl-0 = <&i2c0_default>;
+    pinctrl-names = "default";
+    clock-frequency = <I2C_BITRATE_STANDARD>;
+
+    dac@60 {
+        compatible = "microchip,mcp4716";
+        reg = <0x60>;
+        label = "MCP4716A3T";
+        #io-channel-cells = <1>;
+    };
+};
+
+&gpio0 {
+    status = "okay";
+};
+
+&gpiote {
+    status = "okay";
+};
+
+&flash0 {
+    partitions {
+        compatible = "fixed-partitions";
+        #address-cells = <1>;
+        #size-cells = <1>;
+
+        boot_partition: partition@0 {
+            label = "mcuboot";
+            reg = <0x0 0xc000>;
+        };
+        slot0_partition: partition@c000 {
+            label = "image-0";
+            reg = <0xc000 0x72000>;
+        };
+        slot1_partition: partition@7e000 {
+            label = "image-1";
+            reg = <0x7e000 0x72000>;
+        };
+        scratch_partition: partition@f0000 {
+            label = "image-scratch";
+            reg = <0xf0000 0xa000>;
+        };
+        storage_partition: partition@fa000 {
+            label = "storage";
+            reg = <0xfa000 0x6000>;
+        };
+    };
+};

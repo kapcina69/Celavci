@@ -10,4 +10,7 @@ target_sources(app PRIVATE
   ${app_sources}
   )
 
+# Dodaj include/ kao folder sa header fajlovima
+target_include_directories(app PRIVATE include/)
+
 zephyr_library_include_directories(${ZEPHYR_BASE}/samples/bluetooth)
