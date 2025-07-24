@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdlib.h>  
 #include "ble_nus.h"
+#include "dac.h"
 
 // --- Prototip funkcije za obradu protokola ---
 static void process_command(const uint8_t *data, uint16_t len);
@@ -88,13 +89,13 @@ int ble_nus_init(void)
 #define OK_MSG  "OK\n"
 #define ERR_MSG "ERR\n"
 
-uint8_t amplitude = 10;
+volatile uint8_t amplitude = 10;
 uint8_t frequency = 20;
 uint8_t pulse_width = 5;
 uint8_t temperature = 38;
 uint8_t stim_state = 0;
 
-static void send_response(const char *msg) {
+void send_response(const char *msg) {
     bt_nus_send(NULL, msg, strlen(msg));
 }
 
@@ -129,6 +130,7 @@ static void process_command(const uint8_t *data, uint16_t len) {
         if (value >= 1 && value <= 30) {
             amplitude = (uint8_t)value;
             send_response(OK_MSG);
+            dac_set_value(amplitude * 30); // Postavi DAC vrednost
         } else {
             send_response(ERR_MSG);
         }

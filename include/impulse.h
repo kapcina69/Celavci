@@ -1,3 +1,6 @@
+#ifndef IMPULSE_H
+#define IMPULSE_H
+
 #include <zephyr/types.h>
 #include <stddef.h>
 #include <string.h>
@@ -8,8 +11,7 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
 
-
-/*Define protocol parameters*/
+/* Define protocol parameters */
 #define STIMULATION_PULSE_WIDTH_US 100
 
 /* Get node identifiers from aliases */
@@ -22,4 +24,12 @@ extern const struct gpio_dt_spec pulse_cathode;
 extern const struct gpio_dt_spec pulse_anode;
 extern const struct gpio_dt_spec dc_dc_en;
 
+
+/* Function declarations */
+uint32_t hz_to_ms(uint32_t frequency_hz);
+void pulse_timer_init(void);
+void start_pulse_sequence(void);
+void stop_pulse_sequence(void);
 void generate_pulse_sequence(void);
+
+#endif /* IMPULSE_H */

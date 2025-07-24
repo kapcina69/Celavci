@@ -1,8 +1,17 @@
 #include "dac.h"
 
+static const struct device *i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c0));
+static volatile bool dac_thread_running = false;
 
-const struct device *i2c_dev;
 
+int dac_init(void)
+{
+    if (!device_is_ready(i2c_dev)) {
+        printk("I2C device not ready\n");
+        return -ENODEV;
+    }
+    return 0;
+}
 
 void dac_set_value(uint16_t value)
 {

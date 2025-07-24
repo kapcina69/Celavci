@@ -11,7 +11,7 @@ extern "C" {
 #endif
 
 
-extern uint8_t amplitude;
+extern volatile uint8_t amplitude;
 extern uint8_t frequency;
 extern uint8_t pulse_width;
 extern uint8_t temperature;
@@ -53,7 +53,7 @@ int ble_nus_init(void);
  * @brief Pošalji odgovor preko NUS servisa
  * @param msg Poruka koju treba poslati
  */
-static void send_response(const char *msg);
+void send_response(const char *msg);
 
 
 /**

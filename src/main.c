@@ -18,6 +18,7 @@
 #include "impulse.h"
 #include "ble_nus.h"
 #include "dac.h"
+#include "mux.h"
 
 
 #include <zephyr/bluetooth/bluetooth.h>
@@ -30,7 +31,13 @@
 
 
 
-
+#define MUX_SPI1_DEV   DEVICE_DT_GET(DT_NODELABEL(spi1))
+#define MUX_GPIO_DEV  DEVICE_DT_GET(DT_NODELABEL(gpio0))
+#define STIM_MUX_NUM_CHANNELS 16
+#define STIM_MUX_SPI_DEV   MUX_SPI1_DEV
+#define STIM_MUX_GPIO_DEV  MUX_GPIO_DEV
+#define STIM_MUX_LE_PIN    1
+#define STIM_MUX_CLR_PIN   0
 
 
 
@@ -133,11 +140,7 @@ void main(void)
         printk("GPIO initialization failed!\n");
         return;
     }
-    i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c0));
-    if (!device_is_ready(i2c_dev)) {
-        printk("I2C nije spreman!\n");
-        return;
-    }
+
 
     /* Enable DC-DC converter */
     gpio_pin_set_dt(&dc_dc_en, 1);
@@ -151,19 +154,39 @@ void main(void)
     if (errbt) {
         return -1;
     }
+	dac_set_value(200);//probati 6
 
     // Registruj BLE konekcione callback-ove
     bt_conn_cb_register(&conn_callbacks);
+    pulse_timer_init(); // Inicijalizuj tajmer za puls
+    generate_pulse_sequence(); // Generiši početni puls
+    dac_init(); // Inicijalizuj DAC
+    
+    struct mux_config stim_mux_config = {
+        .spi_dev = STIM_MUX_SPI_DEV,
+        .gpio_dev = STIM_MUX_GPIO_DEV,
+        .le_pin = STIM_MUX_LE_PIN,
+        .clr_pin = STIM_MUX_CLR_PIN,
+        .num_channels = STIM_MUX_NUM_CHANNELS
+    };
 
-    /* Main loop */
+    mux_init(&stim_mux_config); // Inicijalizuj MUX
+    uint8_t tx_buffer[] = {0x11, 0x01}; // Inicijalizuj TX buffer
+    uint8_t tx_buffer1[] = {0x10, 0x10}; // Inicijalizuj TX buffer za isključivanje
+    mux_write(&stim_mux_config, tx_buffer, sizeof(tx_buffer)); // Pošalji podatke na MUX
     while (1) {
-        generate_pulse_sequence();        
-        static bool led1_state = false;
-        gpio_pin_set_dt(&led1, led1_state ? 1 : 0);
-        led1_state = !led1_state;
-		dac_set_value(30*amplitude);
+        // generate_pulse_sequence();        
+        // static bool led1_state = false;
+        // gpio_pin_set_dt(&led1, led1_state ? 1 : 0);
+        // led1_state = !led1_state;
+        // k_sleep(K_MSEC(1000)); // Sleep for 1 second
+        // dac_set_value(900); 
 
-
-
+        // set_mux(0x0000); 
+        // start_pulse_sequence(); // Pokreni sekvencu pulsa
+        // mux_write(&stim_mux_config, tx_buffer, sizeof(tx_buffer)); // Pošalji podatke na MUX
+        // k_sleep(K_MSEC(1000)); // Sleep for 1 second
+        // mux_write(&stim_mux_config, tx_buffer1, sizeof(tx_buffer1)); // Pošalji podatke na MUX
+        // k_sleep(K_MSEC(1000)); // Sleep for 1 second
     }
 }
