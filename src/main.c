@@ -39,7 +39,13 @@
 #define STIM_MUX_LE_PIN    1
 #define STIM_MUX_CLR_PIN   0
 
-
+struct mux_config stim_mux_config = {
+        .spi_dev = STIM_MUX_SPI_DEV,
+        .gpio_dev = STIM_MUX_GPIO_DEV,
+        .le_pin = STIM_MUX_LE_PIN,
+        .clr_pin = STIM_MUX_CLR_PIN,
+        .num_channels = STIM_MUX_NUM_CHANNELS
+    };
 
 /* LED definitions - now matching your DTS active-low configuration */
 static const struct gpio_dt_spec led0 = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
@@ -162,18 +168,13 @@ void main(void)
     generate_pulse_sequence(); // Generiši početni puls
     dac_init(); // Inicijalizuj DAC
     
-    struct mux_config stim_mux_config = {
-        .spi_dev = STIM_MUX_SPI_DEV,
-        .gpio_dev = STIM_MUX_GPIO_DEV,
-        .le_pin = STIM_MUX_LE_PIN,
-        .clr_pin = STIM_MUX_CLR_PIN,
-        .num_channels = STIM_MUX_NUM_CHANNELS
-    };
+    
 
     mux_init(&stim_mux_config); // Inicijalizuj MUX
-    uint8_t tx_buffer[] = {0x11, 0x01}; // Inicijalizuj TX buffer
+    uint8_t tx_buffer[] = {0xFF, 0xFF}; // Inicijalizuj TX buffer
     uint8_t tx_buffer1[] = {0x10, 0x10}; // Inicijalizuj TX buffer za isključivanje
     mux_write(&stim_mux_config, tx_buffer, sizeof(tx_buffer)); // Pošalji podatke na MUX
+    k_sleep(K_MSEC(1000)); // Sleep for 1 second
     while (1) {
         // generate_pulse_sequence();        
         // static bool led1_state = false;
