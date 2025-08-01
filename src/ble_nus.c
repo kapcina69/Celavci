@@ -8,8 +8,8 @@
 #include "ble_nus.h"
 #include "dac.h"
 
-// --- Prototip funkcije za obradu protokola ---
-static void process_command(const uint8_t *data, uint16_t len);
+// // --- Prototip funkcije za obradu protokola ---
+// static void process_command(const uint8_t *data, uint16_t len);
 
 // --- Callback kada primimo podatke preko NUS ---
 static void nus_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
@@ -112,7 +112,7 @@ static void process_command(const uint8_t *data, uint16_t len) {
     // Parsiraj vrednost iza ';' kao DECIMALNI broj (1 do 3 cifre)
     char val_str[4] = {0};
     int val_len = len - 3;
-    if (val_len > 3) val_len = 3;  // ograniči na max 3 cifre
+    if (val_len > 3) val_len = 3;  
     memcpy(val_str, &data[3], val_len);
     val_str[val_len] = '\0';
 
@@ -130,7 +130,7 @@ static void process_command(const uint8_t *data, uint16_t len) {
         if (value >= 1 && value <= 30) {
             amplitude = (uint8_t)value;
             send_response(OK_MSG);
-            dac_set_value(amplitude * 30); // Postavi DAC vrednost
+            dac_set_value(amplitude * 34); // Maksimalna vrednost DAC-a je 1023, pa množi sa 34 da dobiješ odgovarajuću vrednost
         } else {
             send_response(ERR_MSG);
         }

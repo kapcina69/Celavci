@@ -9,7 +9,7 @@
 #define DC_DC_EN_NODE      DT_ALIAS(dc_dc_en)
 
 uint8_t number_of_pulses = 0;
-uint8_t frequency_of_impulses = 20; // Default frequency
+uint32_t frequency_of_impulses = 10000; // Default frequency
 
 const struct gpio_dt_spec pulse_cathode = GPIO_DT_SPEC_GET(PULSE_CATHODE_NODE, gpios);
 const struct gpio_dt_spec pulse_anode   = GPIO_DT_SPEC_GET(PULSE_ANODE_NODE, gpios);
@@ -24,13 +24,14 @@ static enum {
 } pulse_state = PULSE_IDLE;
 
 
-uint32_t hz_to_ms(uint32_t frequency_hz) {
+uint32_t hz_to_us(uint32_t frequency_hz) {
     if (frequency_hz == 0) {
-        return 0; // or error: division by zero
+        return 0;
     }
-    return 1000 / frequency_hz;
+    return 1000000UL / frequency_hz;
 }
-#define PAUSE_BETWEEN_SEQUENCES_MS 200 // Pauza između sekvenci (možeš menjati)
+
+
 
 void pulse_timer_handler(struct k_timer *timer)
 {
@@ -45,7 +46,7 @@ void pulse_timer_handler(struct k_timer *timer)
         case PULSE_CATHODE_ON:
             gpio_pin_set_dt(&pulse_cathode, 0);
             pulse_state = PULSE_PAUSE;
-            k_timer_start(&pulse_timer, K_MSEC(hz_to_ms(frequency_of_impulses)), K_NO_WAIT);
+            k_timer_start(&pulse_timer, K_USEC(hz_to_us(frequency_of_impulses)), K_NO_WAIT);
             break;
             
         case PULSE_PAUSE:
@@ -75,7 +76,7 @@ void pulse_timer_handler(struct k_timer *timer)
                 pulse_state = PULSE_IDLE;
                 
                 // Pauza pre sledeće serije impulsa
-                k_timer_start(&pulse_timer, K_MSEC(hz_to_ms(frequency)), K_NO_WAIT);
+                k_timer_start(&pulse_timer, K_USEC(hz_to_us(frequency)), K_NO_WAIT);
             } else {
                 number_of_pulses++;
                 gpio_pin_set_dt(&pulse_anode, 1);

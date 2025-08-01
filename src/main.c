@@ -160,13 +160,14 @@ void main(void)
     if (errbt) {
         return -1;
     }
-	dac_set_value(200);//probati 6
 
     // Registruj BLE konekcione callback-ove
     bt_conn_cb_register(&conn_callbacks);
     pulse_timer_init(); // Inicijalizuj tajmer za puls
     generate_pulse_sequence(); // Generiši početni puls
     dac_init(); // Inicijalizuj DAC
+	dac_set_value(34*10);//probati 6
+
     
     
 
