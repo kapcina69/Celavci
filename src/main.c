@@ -126,11 +126,12 @@ void main(void)
 {
     int err;
 
-    /* Initialize LEDs - with proper active-low handling */
+    /* === Inicijalizacija LED-ova === */
     if (!device_is_ready(led0.port)) {
         printk("LED0 device not ready\n");
         return;
     }
+
     if (!device_is_ready(led1.port)) {
         printk("LED1 device not ready\n");
         return;
@@ -142,53 +143,40 @@ void main(void)
         return;
     }
 
-	if (init_gpios() != 0) {
+    /* === Inicijalizacija dodatnih GPIO pinova === */
+    if (init_gpios() != 0) {
         printk("GPIO initialization failed!\n");
         return;
     }
 
-
-    /* Enable DC-DC converter */
+    /* === Aktivacija DC-DC konvertora === */
     gpio_pin_set_dt(&dc_dc_en, 1);
     printk("DC-DC converter enabled\n");
-
     k_sleep(K_MSEC(100));
 
-
-    // Inicijalizuj BLE (NUS servis, advertising, itd.)
-    int errbt = ble_nus_init();
-    if (errbt) {
-        return -1;
+    /* === Inicijalizacija BLE === */
+    err = ble_nus_init();
+    if (err) {
+        printk("BLE initialization failed (%d)\n", err);
+        return;
     }
 
-    // Registruj BLE konekcione callback-ove
     bt_conn_cb_register(&conn_callbacks);
-    pulse_timer_init(); // Inicijalizuj tajmer za puls
-    generate_pulse_sequence(); // Generiši početni puls
-    dac_init(); // Inicijalizuj DAC
-	dac_set_value(34*10);//probati 6
 
-    
-    
+    /* === Inicijalizacija DAC-a i tajmera === */
+    dac_init();
+    dac_set_value(80); // Podrazumevana vrednost
 
-    mux_init(&stim_mux_config); // Inicijalizuj MUX
-    uint8_t tx_buffer[] = {0xFF, 0xFF}; // Inicijalizuj TX buffer
-    uint8_t tx_buffer1[] = {0x10, 0x10}; // Inicijalizuj TX buffer za isključivanje
-    mux_write(&stim_mux_config, tx_buffer, sizeof(tx_buffer)); // Pošalji podatke na MUX
-    k_sleep(K_MSEC(1000)); // Sleep for 1 second
+    pulse_timer_init();
+    generate_pulse_sequence(); // Početni puls
+
+    /* === Inicijalizacija MUX-a i slanje inicijalnih podataka === */
+    mux_init(&stim_mux_config);
+
+
+
+    /* === Glavna petlja === */
     while (1) {
-        // generate_pulse_sequence();        
-        // static bool led1_state = false;
-        // gpio_pin_set_dt(&led1, led1_state ? 1 : 0);
-        // led1_state = !led1_state;
-        // k_sleep(K_MSEC(1000)); // Sleep for 1 second
-        // dac_set_value(900); 
 
-        // set_mux(0x0000); 
-        // start_pulse_sequence(); // Pokreni sekvencu pulsa
-        // mux_write(&stim_mux_config, tx_buffer, sizeof(tx_buffer)); // Pošalji podatke na MUX
-        // k_sleep(K_MSEC(1000)); // Sleep for 1 second
-        // mux_write(&stim_mux_config, tx_buffer1, sizeof(tx_buffer1)); // Pošalji podatke na MUX
-        // k_sleep(K_MSEC(1000)); // Sleep for 1 second
     }
 }

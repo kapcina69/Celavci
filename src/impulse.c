@@ -9,7 +9,7 @@
 #define DC_DC_EN_NODE      DT_ALIAS(dc_dc_en)
 
 uint8_t number_of_pulses = 0;
-uint32_t frequency_of_impulses = 10000; // Default frequency
+uint32_t frequency_of_impulses = 1000; // Default frequency
 
 const struct gpio_dt_spec pulse_cathode = GPIO_DT_SPEC_GET(PULSE_CATHODE_NODE, gpios);
 const struct gpio_dt_spec pulse_anode   = GPIO_DT_SPEC_GET(PULSE_ANODE_NODE, gpios);
@@ -35,65 +35,63 @@ uint32_t hz_to_us(uint32_t frequency_hz) {
 
 void pulse_timer_handler(struct k_timer *timer)
 {
+    static const uint8_t pulse_pattern[] = {
+        0x01, 0x02, 0x04, 0x08,
+        0x10, 0x20, 0x40, 0x80
+    };
+
     switch (pulse_state) {
         case PULSE_ANODE_ON:
-            gpio_pin_set_dt(&pulse_anode, 0);
-            gpio_pin_set_dt(&pulse_cathode, 1);
+            // Prvo resetuj sve linije
+            gpio_pin_set_dt(&pulse_cathode, 0);
+            gpio_pin_set_dt(&pulse_anode, 1); // Aktiviraj anodu
             pulse_state = PULSE_CATHODE_ON;
             k_timer_start(&pulse_timer, K_USEC(STIMULATION_PULSE_WIDTH_US * pulse_width), K_NO_WAIT);
             break;
-            
+
         case PULSE_CATHODE_ON:
-            gpio_pin_set_dt(&pulse_cathode, 0);
+            gpio_pin_set_dt(&pulse_anode, 0); // Isključi anodu
+            gpio_pin_set_dt(&pulse_cathode, 1); // Aktiviraj katodu
             pulse_state = PULSE_PAUSE;
-            k_timer_start(&pulse_timer, K_USEC(hz_to_us(frequency_of_impulses)), K_NO_WAIT);
+            k_timer_start(&pulse_timer, K_USEC(STIMULATION_PULSE_WIDTH_US * pulse_width), K_NO_WAIT);
             break;
-            
+
         case PULSE_PAUSE:
-            switch(number_of_pulses){
-                case 0:
-                    tx_buffer_1[0] = 0x01; tx_buffer_1[1] = 0x01; break;
-                case 1:
-                    tx_buffer_1[0] = 0x02; tx_buffer_1[1] = 0x02; break;
-                case 2:
-                    tx_buffer_1[0] = 0x04; tx_buffer_1[1] = 0x04; break;
-                case 3:
-                    tx_buffer_1[0] = 0x08; tx_buffer_1[1] = 0x08; break;
-                case 4:
-                    tx_buffer_1[0] = 0x10; tx_buffer_1[1] = 0x10; break;
-                case 5:
-                    tx_buffer_1[0] = 0x20; tx_buffer_1[1] = 0x20; break;
-                case 6:
-                    tx_buffer_1[0] = 0x40; tx_buffer_1[1] = 0x40; break;
-                case 7:
-                    tx_buffer_1[0] = 0x80; tx_buffer_1[1] = 0x80; break;
+            // Isključi sve izlaze (mirno stanje)
+            gpio_pin_set_dt(&pulse_anode, 0);
+            gpio_pin_set_dt(&pulse_cathode, 0);
+
+            // Postavi vrednost na MUX
+            if (number_of_pulses < ARRAY_SIZE(pulse_pattern)) {
+                uint8_t pattern = pulse_pattern[number_of_pulses];
+                tx_buffer_1[0] = tx_buffer_1[1] = pattern;
+                mux_write(&stim_mux_config, tx_buffer_1, sizeof(tx_buffer_1));
             }
 
-            mux_write(&stim_mux_config, tx_buffer_1, sizeof(tx_buffer_1)); // Send to MUX
-            
-            if (number_of_pulses == 7) {
+            number_of_pulses++;
+
+            if (number_of_pulses >= ARRAY_SIZE(pulse_pattern)) {
                 number_of_pulses = 0;
                 pulse_state = PULSE_IDLE;
-                
-                // Pauza pre sledeće serije impulsa
                 k_timer_start(&pulse_timer, K_USEC(hz_to_us(frequency)), K_NO_WAIT);
             } else {
-                number_of_pulses++;
-                gpio_pin_set_dt(&pulse_anode, 1);
                 pulse_state = PULSE_ANODE_ON;
-                k_timer_start(&pulse_timer, K_USEC(STIMULATION_PULSE_WIDTH_US * pulse_width), K_NO_WAIT);
+                k_timer_start(&pulse_timer, K_USEC(hz_to_us(frequency_of_impulses)), K_NO_WAIT);
             }
             break;
-            
+
         case PULSE_IDLE:
         default:
-            // Nakon pauze kreće nova sekvenca
-            gpio_pin_set_dt(&pulse_anode, 1);
+            // Resetuj stanje i pripremi za novi impuls
+            gpio_pin_set_dt(&pulse_anode, 0);
+            gpio_pin_set_dt(&pulse_cathode, 0);
             pulse_state = PULSE_ANODE_ON;
-            k_timer_start(&pulse_timer, K_USEC(STIMULATION_PULSE_WIDTH_US * pulse_width), K_NO_WAIT);
+            k_timer_start(&pulse_timer, K_USEC(hz_to_us(frequency_of_impulses)), K_NO_WAIT);
             break;
     }
 }
+
+
 
 
 /* Initialize the pulse timer */

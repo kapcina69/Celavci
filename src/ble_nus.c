@@ -126,11 +126,11 @@ static void process_command(const uint8_t *data, uint16_t len) {
             send_response(ERR_MSG);
         }
 
-    } else if (strcmp(cmd, "SA") == 0) {
+    } else if (strcmp(cmd, "SA") == 0) { //RSENS otpornik je 270 oma, pa je gornja vrednost 0.81V, a donja vrednost 0.027V
         if (value >= 1 && value <= 30) {
             amplitude = (uint8_t)value;
             send_response(OK_MSG);
-            dac_set_value(amplitude * 34); // Maksimalna vrednost DAC-a je 1023, pa množi sa 34 da dobiješ odgovarajuću vrednost
+            dac_set_value(amplitude * 8); // Za vrednost 8 se dobija 0.027V, a za 240 se dobija 0.81V
         } else {
             send_response(ERR_MSG);
         }
