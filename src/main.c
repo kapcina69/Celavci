@@ -47,34 +47,44 @@ struct mux_config stim_mux_config = {
         .num_channels = STIM_MUX_NUM_CHANNELS
     };
 
-/* LED definitions - now matching your DTS active-low configuration */
 static const struct gpio_dt_spec led0 = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 
+// --- Deklaracije funkcija ---
+void connected(struct bt_conn *conn, uint8_t err);
+void disconnected(struct bt_conn *conn, uint8_t reason);
 
-// Bluetooth callback struktura (implementacija u ble_nus.c)
+// Bluetooth callback structure (implementation in ble_nus.c)
 static struct bt_conn_cb conn_callbacks = {
     .connected = connected,
     .disconnected = disconnected,
 };
 
-// --- BT događaji ---
+// --- BT events ---
 void connected(struct bt_conn *conn, uint8_t err)
 {
     if (err) {
-        printk("BLE konekcija nije uspela (err %u)\n", err);
+        printk("BLE connection failed (err %u)\n", err);
     } else {
-        printk("BLE povezan\n");
-		gpio_pin_set_dt(&led0, 1);  // Uključi LED0 kada je povezan
-		
+        printk("BLE connected\n");
+        gpio_pin_set_dt(&led1, 1);  // Turn on LED0 when connected
+        
     }
 }
 
 void disconnected(struct bt_conn *conn, uint8_t reason)
 {
-    printk("BLE diskonektovan (razlog %u)\n", reason);
-	gpio_pin_set_dt(&led0, 0);  // Isključi LED0 kada je diskonektovan
+    printk("BLE disconnected (reason %u)\n", reason);
+    gpio_pin_set_dt(&led1, 0);  // Turn off LED0 when disconnected
 }
+
+#define INIT_GPIO(alias_name)                                       \
+    const struct gpio_dt_spec alias_name =                          \
+        GPIO_DT_SPEC_GET(DT_ALIAS(alias_name), gpios);              \
+    if (!gpio_is_ready_dt(&alias_name)) {                           \
+    } else {                                                        \
+        gpio_pin_configure_dt(&alias_name, GPIO_OUTPUT_INACTIVE);  \
+    }
 
 
 /* Initialize all GPIOs */
@@ -125,8 +135,11 @@ static int init_gpios(void)
 void main(void)
 {
     int err;
-
-    /* === Inicijalizacija LED-ova === */
+        INIT_GPIO(gpio8_out);   // P0.08
+        INIT_GPIO(gpio13_out);  // P0.13
+        INIT_GPIO(gpio14_out);  // P0.14
+        INIT_GPIO(gpio15_out);  // P0.15
+    /* === LED initialization === */
     if (!device_is_ready(led0.port)) {
         printk("LED0 device not ready\n");
         return;
@@ -143,18 +156,19 @@ void main(void)
         return;
     }
 
-    /* === Inicijalizacija dodatnih GPIO pinova === */
+    /* === Additional GPIO pins initialization === */
     if (init_gpios() != 0) {
         printk("GPIO initialization failed!\n");
         return;
     }
+    gpio_pin_set_dt(&led0, 1);  // Turn on LED0 when connected
 
-    /* === Aktivacija DC-DC konvertora === */
+    /* === DC-DC converter activation === */
     gpio_pin_set_dt(&dc_dc_en, 1);
     printk("DC-DC converter enabled\n");
     k_sleep(K_MSEC(100));
 
-    /* === Inicijalizacija BLE === */
+    /* === BLE initialization === */
     err = ble_nus_init();
     if (err) {
         printk("BLE initialization failed (%d)\n", err);
@@ -163,19 +177,17 @@ void main(void)
 
     bt_conn_cb_register(&conn_callbacks);
 
-    /* === Inicijalizacija DAC-a i tajmera === */
+    /* === DAC and timer initialization === */
     dac_init();
-    dac_set_value(80); // Podrazumevana vrednost
+    dac_set_value(80); // Default value
 
     pulse_timer_init();
-    generate_pulse_sequence(); // Početni puls
+    generate_pulse_sequence(); // Initial pulse
 
-    /* === Inicijalizacija MUX-a i slanje inicijalnih podataka === */
+    /* === MUX initialization and sending initial data === */
     mux_init(&stim_mux_config);
 
-
-
-    /* === Glavna petlja === */
+    /* === Main loop === */
     while (1) {
 
     }

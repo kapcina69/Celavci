@@ -42,26 +42,27 @@ void pulse_timer_handler(struct k_timer *timer)
 
     switch (pulse_state) {
         case PULSE_ANODE_ON:
-            // Prvo resetuj sve linije
+            // Set anode high, cathode low
             gpio_pin_set_dt(&pulse_cathode, 0);
-            gpio_pin_set_dt(&pulse_anode, 1); // Aktiviraj anodu
+            gpio_pin_set_dt(&pulse_anode, 1); 
             pulse_state = PULSE_CATHODE_ON;
             k_timer_start(&pulse_timer, K_USEC(STIMULATION_PULSE_WIDTH_US * pulse_width), K_NO_WAIT);
             break;
 
         case PULSE_CATHODE_ON:
-            gpio_pin_set_dt(&pulse_anode, 0); // Isključi anodu
-            gpio_pin_set_dt(&pulse_cathode, 1); // Aktiviraj katodu
+            // Set cathode high, anode low
+            gpio_pin_set_dt(&pulse_anode, 0); 
+            gpio_pin_set_dt(&pulse_cathode, 1); 
             pulse_state = PULSE_PAUSE;
             k_timer_start(&pulse_timer, K_USEC(STIMULATION_PULSE_WIDTH_US * pulse_width), K_NO_WAIT);
             break;
 
         case PULSE_PAUSE:
-            // Isključi sve izlaze (mirno stanje)
+            // Turn off both anode and cathode
             gpio_pin_set_dt(&pulse_anode, 0);
             gpio_pin_set_dt(&pulse_cathode, 0);
 
-            // Postavi vrednost na MUX
+            // Update MUX with the next pattern
             if (number_of_pulses < ARRAY_SIZE(pulse_pattern)) {
                 uint8_t pattern = pulse_pattern[number_of_pulses];
                 tx_buffer_1[0] = tx_buffer_1[1] = pattern;
@@ -82,7 +83,6 @@ void pulse_timer_handler(struct k_timer *timer)
 
         case PULSE_IDLE:
         default:
-            // Resetuj stanje i pripremi za novi impuls
             gpio_pin_set_dt(&pulse_anode, 0);
             gpio_pin_set_dt(&pulse_cathode, 0);
             pulse_state = PULSE_ANODE_ON;

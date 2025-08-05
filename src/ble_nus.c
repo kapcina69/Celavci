@@ -8,13 +8,12 @@
 #include "ble_nus.h"
 #include "dac.h"
 
-// // --- Prototip funkcije za obradu protokola ---
-// static void process_command(const uint8_t *data, uint16_t len);
 
-// --- Callback kada primimo podatke preko NUS ---
+
+// --- Callback when receive data from NUS ---
 static void nus_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
 {
-    printk("Primljena BLE poruka:\n");
+    printk("Received BLE message:\n");
 
     printk("  HEX: ");
     for (uint16_t i = 0; i < len; i++) {
@@ -39,21 +38,20 @@ static void nus_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len
 void bt_ready(int err)
 {
     if (err) {
-        printk("Bluetooth nije uspešno pokrenut (err %d)\n", err);
+        printk("Bluetooth was not started successfully (err %d)\n", err);
         return;
     }
 
-    printk("Bluetooth spreman, startujem advertising...\n");
+    printk("Bluetooth ready, starting advertising...\n");
 
     err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, NULL, 0, NULL, 0);
     if (err) {
-        printk("Advertising nije pokrenut (err %d)\n", err);
+        printk("Advertising not started (err %d)\n", err);
     } else {
-        printk("BLE advertising aktivan\n");
+        printk("BLE advertising active\n");
     }
 }
 
-// --- Registracija callback-ova ---
 static struct bt_conn_cb conn_callbacks = {
     .connected = connected,
     .disconnected = disconnected,
@@ -63,7 +61,6 @@ static struct bt_nus_cb nus_callbacks = {
     .received = nus_cb,
 };
 
-// --- Inicijalizacija BLE i NUS ---
 int ble_nus_init(void)
 {
     int err;
@@ -78,14 +75,13 @@ int ble_nus_init(void)
 
     err = bt_nus_init(&nus_callbacks);
     if (err) {
-        printk("NUS servis nije inicijalizovan (err %d)\n", err);
+        printk("NUS service not initialized (err %d)\n", err);
         return err;
     }
 
     return 0;
 }
 
-// --- Protokol: Komanda obrada ---
 #define OK_MSG  "OK\n"
 #define ERR_MSG "ERR\n"
 
@@ -109,14 +105,14 @@ static void process_command(const uint8_t *data, uint16_t len) {
 
     char cmd[3] = {data[0], data[1], '\0'};
 
-    // Parsiraj vrednost iza ';' kao DECIMALNI broj (1 do 3 cifre)
+    // Parse the value after ';' as a DECIMAL number (1 to 3 digits)
     char val_str[4] = {0};
     int val_len = len - 3;
     if (val_len > 3) val_len = 3;  
     memcpy(val_str, &data[3], val_len);
     val_str[val_len] = '\0';
 
-    int value = strtol(val_str, NULL, 10);  // decimalno
+    int value = strtol(val_str, NULL, 10);  // decimal
 
     if (strcmp(cmd, "ST") == 0) {
         if (value >= 0 && value <= 3) {
@@ -126,11 +122,11 @@ static void process_command(const uint8_t *data, uint16_t len) {
             send_response(ERR_MSG);
         }
 
-    } else if (strcmp(cmd, "SA") == 0) { //RSENS otpornik je 270 oma, pa je gornja vrednost 0.81V, a donja vrednost 0.027V
+    } else if (strcmp(cmd, "SA") == 0) { // RSENS resistor is 270 ohms, so the upper value is 0.81V, and the lower value is 0.027V
         if (value >= 1 && value <= 30) {
             amplitude = (uint8_t)value;
             send_response(OK_MSG);
-            dac_set_value(amplitude * 8); // Za vrednost 8 se dobija 0.027V, a za 240 se dobija 0.81V
+            dac_set_value(amplitude * 8); // For value 8 you get 0.027V, and for 240 you get 0.81V
         } else {
             send_response(ERR_MSG);
         }
