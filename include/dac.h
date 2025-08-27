@@ -1,32 +1,42 @@
+/**
+ * @file dac.h
+ * @brief I2C upravljanje eksternim 10‑bitnim DAC‑om.
+ *
+ * API obezbeđuje inicijalizaciju I2C magistrale i upis 10‑bitne vrednosti
+ * (0–1023) u DAC izlazni registar.
+ */
+
 #ifndef DAC_H
 #define DAC_H
 
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/i2c.h>
-#include "ble_nus.h"
 
-#define DAC_ADDR 0x63 /**< I2C address of the external DAC device. */
+/**
+ * @def DAC_ADDR
+ * @brief I2C adresa DAC uređaja.
+ */
+#define DAC_ADDR 0x63
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * @brief Initializes the DAC peripheral over I2C.
+ * @brief Inicijalizuje I2C i priprema DAC za rad.
  *
- * Configures the I2C interface and prepares the DAC for operation.
- *
- * @return 0 on success, or a negative error code on failure.
+ * @retval 0  Uspeh.
+ * @retval <0 Negativan errno kod (npr. uređaj nije spreman).
  */
 int dac_init(void);
 
 /**
- * @brief Sets the output value of the DAC.
+ * @brief Postavlja 10‑bitnu vrednost na DAC izlazu.
  *
- * Sends a 10-bit value (0–1023) to the DAC over I2C to control analog output.
+ * @param value Vrednost 0–1023 (višak se seče na opseg).
  *
- * @param value The value to write to the DAC (0–1023).
+ * @note Funkcija ne blokira duže od I2C transfera.
  */
 void dac_set_value(uint16_t value);
 

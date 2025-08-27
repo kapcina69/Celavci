@@ -31,14 +31,6 @@
 
 
 
-#define MUX_SPI1_DEV   DEVICE_DT_GET(DT_NODELABEL(spi1))
-#define MUX_GPIO_DEV  DEVICE_DT_GET(DT_NODELABEL(gpio0))
-#define STIM_MUX_NUM_CHANNELS 16
-#define STIM_MUX_SPI_DEV   MUX_SPI1_DEV
-#define STIM_MUX_GPIO_DEV  MUX_GPIO_DEV
-#define STIM_MUX_LE_PIN    1
-#define STIM_MUX_CLR_PIN   0
-
 struct mux_config stim_mux_config = {
         .spi_dev = STIM_MUX_SPI_DEV,
         .gpio_dev = STIM_MUX_GPIO_DEV,
@@ -78,13 +70,7 @@ void disconnected(struct bt_conn *conn, uint8_t reason)
     gpio_pin_set_dt(&led1, 0);  // Turn off LED0 when disconnected
 }
 
-#define INIT_GPIO(alias_name)                                       \
-    const struct gpio_dt_spec alias_name =                          \
-        GPIO_DT_SPEC_GET(DT_ALIAS(alias_name), gpios);              \
-    if (!gpio_is_ready_dt(&alias_name)) {                           \
-    } else {                                                        \
-        gpio_pin_configure_dt(&alias_name, GPIO_OUTPUT_INACTIVE);  \
-    }
+
 
 
 /* Initialize all GPIOs */
@@ -135,10 +121,7 @@ static int init_gpios(void)
 void main(void)
 {
     int err;
-        INIT_GPIO(gpio8_out);   // P0.08
-        INIT_GPIO(gpio13_out);  // P0.13
-        INIT_GPIO(gpio14_out);  // P0.14
-        INIT_GPIO(gpio15_out);  // P0.15
+
     /* === LED initialization === */
     if (!device_is_ready(led0.port)) {
         printk("LED0 device not ready\n");
@@ -181,11 +164,11 @@ void main(void)
     dac_init();
     dac_set_value(80); // Default value
 
-    pulse_timer_init();
-    generate_pulse_sequence(); // Initial pulse
+
 
     /* === MUX initialization and sending initial data === */
     mux_init(&stim_mux_config);
+    start_pulse_sequence(); 
 
     /* === Main loop === */
     while (1) {

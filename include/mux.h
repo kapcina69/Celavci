@@ -8,12 +8,15 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-/**
- * @brief Default SPI and GPIO device for the multiplexer
- */
- #define MUX_SPI1_DEV   DEVICE_DT_GET(DT_NODELABEL(spi1))
- #define MUX_SPI2_DEV   DEVICE_DT_GET(DT_NODELABEL(spi2))
+#define MUX_SPI1_DEV   DEVICE_DT_GET(DT_NODELABEL(spi1))
 #define MUX_GPIO_DEV  DEVICE_DT_GET(DT_NODELABEL(gpio0))
+#define STIM_MUX_NUM_CHANNELS 16
+#define STIM_MUX_SPI_DEV   MUX_SPI1_DEV
+#define STIM_MUX_GPIO_DEV  MUX_GPIO_DEV
+#define STIM_MUX_LE_PIN    1
+#define STIM_MUX_CLR_PIN   0
+
+
 
 /**
  * @brief Configuration parameters for the MUX controller

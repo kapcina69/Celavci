@@ -3,10 +3,42 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
 #include <bluetooth/services/nus.h>
+
+#include <ctype.h>
+#include <stdlib.h>
 #include <string.h>
-#include <stdlib.h>  
+#include <stdio.h>
+
 #include "ble_nus.h"
 #include "dac.h"
+
+#define PATTERN_LEN   8
+#define MAX_PATTERNS  16
+
+/* Globalne promenljive iz impulse.c */
+extern uint16_t pulse_patterns[MAX_PATTERNS][PATTERN_LEN];
+extern volatile size_t patterns_count;
+extern volatile size_t number_patter;
+
+/* Helper: parsiraj heks token u uint16_t (dozvoljen prefiks 0x) */
+static bool parse_hex16(const char *tok, uint16_t *out)
+{
+    if (!tok || !out) return false;
+    while (*tok && isspace((unsigned char)*tok)) tok++;   // preskoči beline
+
+    unsigned long v = 0;
+    if ((tok[0] == '0') && (tok[1] == 'x' || tok[1] == 'X')) {
+        tok += 2;
+    }
+
+    char *endp = NULL;
+    v = strtoul(tok, &endp, 16);
+    if (endp == tok)    return false;     // nema cifara
+    if (v > 0xFFFFUL)   return false;     // izvan 16-bit
+    *out = (uint16_t)v;
+    return true;
+}
+
 
 
 
@@ -81,9 +113,13 @@ int ble_nus_init(void)
 
     return 0;
 }
-
 #define OK_MSG  "OK\n"
 #define ERR_MSG "ERR\n"
+
+void send_response(const char *msg) {
+    bt_nus_send(NULL, msg, strlen(msg));
+}
+
 
 volatile uint8_t amplitude = 10;
 uint8_t frequency = 20;
@@ -91,28 +127,92 @@ uint8_t pulse_width = 5;
 uint8_t temperature = 38;
 uint8_t stim_state = 0;
 
-void send_response(const char *msg) {
-    bt_nus_send(NULL, msg, strlen(msg));
-}
+static void process_command(const uint8_t *data, uint16_t len)
+{
+    /* Napravi lokalni, nul-terminiran string od RX bajtova */
+    char msg[160];
+    size_t cpy = (len < sizeof(msg) - 1) ? len : (sizeof(msg) - 1);
+    memcpy(msg, data, cpy);
+    msg[cpy] = '\0';
 
+    /* Trim trailing \r\n belina (opciono) */
+    for (int i = (int)strlen(msg) - 1; i >= 0 && isspace((unsigned char)msg[i]); --i) {
+        msg[i] = '\0';
+    }
 
-
-static void process_command(const uint8_t *data, uint16_t len) {
-    if (len < 4 || data[2] != ';') {
+    /* Provera osnovnog formata "XX;..." */
+    if (strlen(msg) < 3 || msg[2] != ';') {
         send_response(ERR_MSG);
         return;
     }
 
-    char cmd[3] = {data[0], data[1], '\0'};
+    char cmd[3] = { msg[0], msg[1], '\0' };
+    const char *arg = msg + 3;  // deo posle ';'
 
-    // Parse the value after ';' as a DECIMAL number (1 to 3 digits)
-    char val_str[4] = {0};
-    int val_len = len - 3;
-    if (val_len > 3) val_len = 3;  
-    memcpy(val_str, &data[3], val_len);
-    val_str[val_len] = '\0';
+    /* === Novi set komandi: SP i SM === */
 
-    int value = strtol(val_str, NULL, 10);  // decimal
+    /* SP;0xAABB 0xCCDD ... (8 vrednosti) */
+    if (strcmp(cmd, "SP") == 0) {
+        uint16_t tmp[PATTERN_LEN];
+        int found = 0;
+
+        // Napravi kopiju argumenata jer ćemo tokenizovati po belinama
+        char buf[128];
+        size_t n = strnlen(arg, sizeof(buf) - 1);
+        memcpy(buf, arg, n);
+        buf[n] = '\0';
+
+        for (char *p = strtok(buf, " \t"); p != NULL && found < PATTERN_LEN; p = strtok(NULL, " \t")) {
+            uint16_t v;
+            if (!parse_hex16(p, &v)) {
+                send_response("ERR: bad hex in SP\n");
+                return;
+            }
+            tmp[found++] = v;
+        }
+
+        if (found != PATTERN_LEN) {
+            send_response("ERR: need exactly 8 values\n");
+            return;
+        }
+
+        if (patterns_count >= MAX_PATTERNS) {
+            send_response("ERR: patterns full\n");
+            return;
+        }
+
+        /* Upis u kolekciju */
+        for (int i = 0; i < PATTERN_LEN; ++i) {
+            pulse_patterns[patterns_count][i] = tmp[i];
+        }
+        size_t idx_added = patterns_count;
+        patterns_count++;
+
+        char ok[48];
+        snprintf(ok, sizeof(ok), "OK: SP stored as #%u\n", (unsigned)idx_added);
+        send_response(ok);
+        return;
+    }
+
+    /* SM;x  — set active pattern (x može biti dec ili hex "0x...") */
+    if (strcmp(cmd, "SM") == 0) {
+        // baza 0 -> prihvata 10/16 (npr. "7" ili "0x7")
+        long v = strtol(arg, NULL, 0);
+        if (v < 0 || (size_t)v >= patterns_count) {
+            send_response("ERR: invalid pattern index\n");
+            return;
+        }
+        number_patter = (size_t)v;
+
+        char ok[40];
+        snprintf(ok, sizeof(ok), "OK: active pattern=%ld\n", v);
+        send_response(ok);
+        return;
+    }
+
+    /* === Postojeće kratke komande oblika "XX;DECIMAL" === */
+    /* Izvuci decimalnu vrednost posle ';' (do kraja) */
+    int value = (int)strtol(arg, NULL, 10);
 
     if (strcmp(cmd, "ST") == 0) {
         if (value >= 0 && value <= 3) {
@@ -122,11 +222,11 @@ static void process_command(const uint8_t *data, uint16_t len) {
             send_response(ERR_MSG);
         }
 
-    } else if (strcmp(cmd, "SA") == 0) { // RSENS resistor is 270 ohms, so the upper value is 0.81V, and the lower value is 0.027V
+    } else if (strcmp(cmd, "SA") == 0) {
         if (value >= 1 && value <= 30) {
             amplitude = (uint8_t)value;
             send_response(OK_MSG);
-            dac_set_value(amplitude * 8); // For value 8 you get 0.027V, and for 240 you get 0.81V
+            dac_set_value(amplitude * 8); // 8->0.027V, 240->0.81V (kao komentar u tvom kodu)
         } else {
             send_response(ERR_MSG);
         }
@@ -141,21 +241,17 @@ static void process_command(const uint8_t *data, uint16_t len) {
 
     } else if (strcmp(cmd, "SW") == 0) {
         if (value >= 1 && value <= 10) {
-            printk("Pulse width set to %d\n", value);
             pulse_width = (uint8_t)value;
             send_response(OK_MSG);
         } else {
-            printk("Invalid pulse width value: %d\n", value);
             send_response(ERR_MSG);
         }
 
     } else if (strcmp(cmd, "HT") == 0) {
         if (value >= 25 && value <= 42) {
-            printk("Temperature set to %d\n", value);
             temperature = (uint8_t)value;
             send_response(OK_MSG);
         } else {
-            printk("Invalid temperature value: %d\n", value);
             send_response(ERR_MSG);
         }
 

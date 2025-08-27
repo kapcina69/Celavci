@@ -1,7 +1,10 @@
 #include "dac.h"
+#include <zephyr/drivers/gpio.h>
 
-static const struct device *i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c0));
-static volatile bool dac_thread_running = false;
+
+#define I2C_DEV_NODE DT_NODELABEL(i2c0)
+static const struct device *i2c_dev = DEVICE_DT_GET(I2C_DEV_NODE);
+
 
 
 int dac_init(void)
@@ -26,8 +29,8 @@ void dac_set_value(uint16_t value)
 
     int ret = i2c_write(i2c_dev, buffer, sizeof(buffer), DAC_ADDR);
     if (ret < 0) {
-        printk("DAC slanje greska: %d\n", ret);
-    } else {
-        printk("DAC postavljen na: %u\n", value);
+        printk("DAC write error (val=%u, err=%d)\n", value, ret);
     }
+
+    
 }

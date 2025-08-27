@@ -1,3 +1,51 @@
+/**
+ * @file impulse.h
+ * @brief Generisanje bifaznih (bipolarnih) stimulacionih impulsa preko GPIO i MUX.
+ *
+ * @details
+ * Ovaj modul implementira **stroj stanja** (state machine) koji u pravilnom redosledu
+ * upravlja izlazima *anode* i *katode* (GPIO) i istovremeno sekvencira uzorke (pattern)
+ * na analognom multiplekseru (MUX) radi adresiranja kanala stimulacije.
+ *
+ * ### Pregled funkcionalnosti
+ * - Inicijalizacija izlaznih pinova: **anoda**, **katoda**, **DC-DC enable**;
+ * - Generisanje **bifaznog** impulsa: faza *anode ON* → faza *katode ON* → pauza;
+ * - Nakon svakog kompletnog impulsa, **MUX** dobija sledeći pattern (2 bajta) da bi se ciklično
+ *   izabrali naredni kanali (npr. 0x01, 0x02, 0x04, ... 0x80);
+ * - Period ponavljanja sekvence zavisi od zadate **frekvencije** (podešava se preko BLE komandnog sloja).
+ *
+ * ### Tajming i definicije
+ * - Širina pojedinačne faze impulsa određena je makroom #STIMULATION_PULSE_WIDTH_US
+ *   i množi se internim parametrom `pulse_width` (vidi BLE NUS komande).
+ *   Efektivno trajanje jedne faze:  `T_phase = STIMULATION_PULSE_WIDTH_US * pulse_width` (µs).
+ * - Jedan kompletan **bifazni** impuls sadrži dve faze (anoda → katoda) i pauzu,
+ *   pa minimalni impuls bez pauze traje približno `2 * T_phase`.
+ * - Period pobude računamo iz frekvencije: @ref hz_to_us(frequency_hz) (µs).
+ *   U okviru implementacije se nakon svake sekvence raspoređuje sledeće aktiviranje work‑a
+ *   tako da se poštuje zadati period (frekvencija).
+ *
+ * ### Stanja mašine (interno u .c)
+ * - **PULSE_ANODE_ON**: anoda = 1, katoda = 0, traje `T_phase`;
+ * - **PULSE_CATHODE_ON**: anoda = 0, katoda = 1, traje `T_phase`;
+ * - **PULSE_PAUSE**: anoda = 0, katoda = 0; ažurira se MUX pattern i raspoređuje sledeći ciklus;
+ * - **PULSE_IDLE**: mirovanje dok se ne pozove @ref start_pulse_sequence().
+ *
+ * ### Bezbednosne napomene
+ * - Anoda i katoda **nikada** ne treba da budu istovremeno aktivne (shoot‑through). Implementacija
+ *   obezbeđuje međufaze sa oba pina na 0 pre prelaza.
+ * - Pre startovanja sekvence uveriti se da je **DC‑DC** napajanje omogućeno i stabilno.
+ * - MUX patterni treba da budu usaglašeni sa stvarnim ožičenjem; pogrešan uzorak može premostiti
+ *   neočekivane kanale.
+ *
+ * ### Konkurentnost / okruženje
+ * - Modul koristi **k_work_delayable** (workqueue) – pozivi API‑ja su *thread‑context* bezbedni.
+ * - @ref start_pulse_sequence i @ref stop_pulse_sequence su **idempotentni** (pozivi u toku imaju
+ *   benigni efekat).
+ *
+ * @note Parametri kao što su `pulse_width`, `frequency` i MUX pattern niz definišu se u drugim
+ *       modulima (npr. BLE NUS komandama i u `impulse.c`). Ovaj header izlaže samo javni API.
+ */
+
 #ifndef IMPULSE_H
 #define IMPULSE_H
 
@@ -11,77 +59,100 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
 
-/* Define protocol parameters */
+/**
+ * @def STIMULATION_PULSE_WIDTH_US
+ * @brief Osnovna širina pojedinačne faze impulsa (µs).
+ *
+ * @details
+ * Efektivna širina faze = `STIMULATION_PULSE_WIDTH_US * pulse_width`.
+ * Vrednost `pulse_width` podešava se u BLE komandama (vidi `SW`).
+ */
 #define STIMULATION_PULSE_WIDTH_US 100
 
-static uint8_t tx_buffer_1[2];
 
 
-/* Get node identifiers from aliases */
+/* === Devicetree aliasi (koriste se u .c za izvlačenje GPIO specifikacija) === */
 #define PULSE_CATHODE_NODE DT_ALIAS(pulse_cathode)
-#define PULSE_ANODE_NODE DT_ALIAS(pulse_anode)
-#define DC_DC_EN_NODE DT_ALIAS(dc_dc_en)
+#define PULSE_ANODE_NODE   DT_ALIAS(pulse_anode)
+#define DC_DC_EN_NODE      DT_ALIAS(dc_dc_en)
 
-/* GPIO specifications */
+
+
+/** @name GPIO specifikacije (popunjene u .c iz DT aliasa)
+ *  @{
+ */
+/** GPIO pin specifikacija za katodu. */
 extern const struct gpio_dt_spec pulse_cathode;
+/** GPIO pin specifikacija za anodu. */
 extern const struct gpio_dt_spec pulse_anode;
+/** GPIO pin za uključivanje DC‑DC konvertora. */
 extern const struct gpio_dt_spec dc_dc_en;
+/** @} */
 
-extern struct mux_config stim_mux_config;
+
 
 
 /**
- * @brief Converts frequency in Hz to period in microseconds.
+ * @brief Globalna MUX konfiguracija koju koristi sekvencer impulsa.
  *
- * @param frequency_hz Frequency in Hertz. If 0, the function returns 0.
- * @return Period in microseconds. Returns 0 if input frequency is 0.
+ * @details
+ * `stim_mux_config` se inicijalizuje u `main.c` (npr. izbor SPI i GPIO uređaja,
+ * LE/CLR pinova i broja kanala). Implementacija impulsa koristi ovu instancu
+ * prilikom slanja pattern‑a u MUX.
+ */
+extern struct mux_config stim_mux_config;
+
+
+
+
+/**
+ * @brief Pretvara frekvenciju u period.
  *
- * @note This function performs integer division: 1 second = 1,000,000 microseconds.
+ * @param frequency_hz Frekvencija u Hz. Ako je 0, vraća 0.
+ * @return Period u mikrosekundama (µs).
+ *
+ * @note 1 s = 1 000 000 µs. Račun je celobrojni, tj. `1e6 / f`.
  */
 uint32_t hz_to_us(uint32_t frequency_hz);
 
 
-/**
- * @brief Timer callback handler that drives the stimulation pulse sequence.
- *
- * This function controls the state machine that toggles GPIO pins to generate
- * a biphasic stimulation pulse (anode and cathode phases) and applies a specific
- * pulse pattern to the multiplexer (MUX) after each pulse.
- *
- * States:
- * - PULSE_ANODE_ON: Activates the anode, starts timer for pulse width duration.
- * - PULSE_CATHODE_ON: Activates the cathode, starts timer for pulse width.
- * - PULSE_PAUSE: Turns off both anode and cathode, updates MUX pattern, and delays based on frequency.
- * - PULSE_IDLE: Waits until next stimulation trigger.
- *
- * @param timer Pointer to the Zephyr kernel timer object.
- */
-void pulse_timer_handler(struct k_timer *timer);
+
+
+
+
+
+
+
 
 
 /**
- * @brief Starts a new stimulation pulse sequence.
+ * @brief Startuje generisanje bifaznog stimulacionog impulsa.
  *
- * Initializes the MUX with the first pattern, activates the anode, and starts the timer.
- * This function only starts the sequence if the current state is PULSE_IDLE.
+ * @details
+ * - Ako sekvenca već traje, poziv nema efekta (idempotentno).
+ * - Postavlja inicijalni pattern na MUX (npr. 0x0001),
+ * - Resetuje brojač pulseva/pattern‑indeks,
+ * - Aktivira *work* koji pokreće stroj stanja (anoda → katoda → pauza).
+ *
+ * @note Očekuje se da je @ref init_gpios već uspešno pozvan i da je DC‑DC
+ *       napajanje uključeno.
  */
 void start_pulse_sequence(void);
 
 
 /**
- * @brief Stops the ongoing stimulation pulse sequence.
+ * @brief Zaustavlja generisanje impulsa i gasi izlaze.
  *
- * Stops the timer, disables anode and cathode output, and resets the state to PULSE_IDLE.
+ * @details
+ * - Otkaže odloženi work (ako je raspoređen),
+ * - Resetuje stroj stanja u *IDLE*,
+ * - Postavlja anodu i katodu na 0 (bezbedno stanje).
+ * - Poziv je bezbedan i kada sekvenca već nije aktivna.
  */
 void stop_pulse_sequence(void);
 
 
-/**
- * @brief Triggers the generation of a stimulation pulse sequence.
- *
- * This is a wrapper around start_pulse_sequence(), typically used as an external API.
- */
-void generate_pulse_sequence(void);
+
 
 
 #endif /* IMPULSE_H */

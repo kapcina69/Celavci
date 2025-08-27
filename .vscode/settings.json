@@ -2,6 +2,7 @@
     "nrf-connect.applications": [],
     "files.associations": {
         "gpio.h": "c",
-        "i2c.h": "c"
+        "i2c.h": "c",
+        "adc.h": "c"
     }
 }
