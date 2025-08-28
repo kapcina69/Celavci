@@ -10,76 +10,75 @@
 extern "C" {
 #endif
 
+/** @brief Global variables used for stimulation configuration. */
+extern volatile uint8_t amplitude;     /**< Stimulation amplitude (1–30). */
+extern uint8_t frequency;              /**< Stimulation frequency (1–40 Hz). */
+extern uint8_t pulse_width;            /**< Pulse width in units (1–10). */
+extern uint8_t temperature;            /**< Heating temperature (25–42 °C). */
+extern uint8_t stim_state;             /**< Stimulation state (0–3). */
 
-extern uint8_t amplitude;
-extern uint8_t frequency;
-extern uint8_t pulse_width;
-extern uint8_t temperature;
-extern uint8_t stim_state;
-
+extern bool stimulation_running;  /**< Indicates if stimulation is active. */
 
 /**
- * @brief Callback koji se poziva kada je BLE spreman
- * @param err Greška pri pokretanju BLE (0 ako je uspešno)
- * @return void
- * 
+ * @brief Callback called when BLE stack is ready.
+ *
+ * @param err Error code (0 if successful).
  */
 void bt_ready(int err);
 
 /**
- * @brief Callback za događaj uspostavljene konekcije
- * 
- * @param conn Povezana BLE konekcija
- * @param err Greška pri uspostavljanju konekcije (0 ako je uspešno)
+ * @brief Callback triggered when a BLE connection is established.
+ *
+ * @param conn Pointer to the active BLE connection.
+ * @param err Error code during connection (0 if successful).
  */
 void connected(struct bt_conn *conn, uint8_t err);
+
 /**
- * @brief Callback za događaj prekida konekcije
- * @param conn Povezana BLE konekcija
- * @param reason Razlog prekida konekcije
+ * @brief Callback triggered when a BLE connection is terminated.
+ *
+ * @param conn Pointer to the BLE connection.
+ * @param reason Reason for disconnection.
  */
 void disconnected(struct bt_conn *conn, uint8_t reason);
 
 /**
- * @brief Inicijalizacija BLE i NUS servisa
- * Inicijalizuje Bluetooth, registruje callback-ove i pokreće NUS servis.
- * @return 0 ako je uspešno, ili greška kod neuspeha
- * 
+ * @brief Initializes the BLE stack and the Nordic UART Service (NUS).
+ *
+ * Initializes Bluetooth, registers all relevant callbacks, and starts the NUS service.
+ *
+ * @return 0 if successful, otherwise a negative error code.
  */
 int ble_nus_init(void);
 
-
 /**
- * @brief Pošalji odgovor preko NUS servisa
- * @param msg Poruka koju treba poslati
+ * @brief Sends a response message over the Nordic UART Service (NUS).
+ *
+ * @param msg Null-terminated string message to send.
  */
-static void send_response(const char *msg);
-
+void send_response(const char *msg);
 
 /**
- * @brief Obradjuje komandni niz u ASCII formatu i postavlja odgovarajuće parametre.
+ * @brief Parses and processes an ASCII command string received over BLE.
  *
- * Funkcija prima niz bajtova `data` koji sadrži komandni string u formatu "XX;NN", gde:
- *  - "XX" predstavlja dvočlanu komandu (npr. "ST", "SA", "SF", "SW", "HT"),
- *  - ";" je separator,
- *  - "NN" je numerička vrednost (1 do 3 cifre u decimalnom formatu).
+ * Accepts commands in the format "XX;NN", where:
+ * - "XX" is a two-character command identifier (e.g., "ST", "SA", "SF", "SW", "HT"),
+ * - ";" is the separator,
+ * - "NN" is a numeric value in decimal (1–3 digits).
  *
- * Na osnovu komande, funkcija postavlja sledeće globalne promenljive:
- *  - "ST": `stim_state` (0–3)
- *  - "SA": `amplitude` (1–30)
- *  - "SF": `frequency` (1–40)
- *  - "SW": `pulse_width` (1–10)
- *  - "HT": `temperature` (25–42)
+ * Supported commands:
+ * - "ST": Sets `stim_state`   → values: 0–3
+ * - "SA": Sets `amplitude`    → values: 1–30
+ * - "SF": Sets `frequency`    → values: 1–40 Hz
+ * - "SW": Sets `pulse_width`  → values: 1–10
+ * - "HT": Sets `temperature`  → values: 25–42 °C
  *
- * U slučaju validne komande i vrednosti, šalje se odgovor `OK_MSG`. 
- * U suprotnom, funkcija vraća `ERR_MSG`.
+ * Sends `OK_MSG` on success, or `ERR_MSG` if the command or value is invalid.
  *
- * @param data Ulazni niz bajtova koji sadrži komandu
- * @param len Dužina ulaznog niza
+ * @param data Pointer to the received byte array.
+ * @param len Length of the received data.
  */
 static void process_command(const uint8_t *data, uint16_t len);
-
-
 
 #ifdef __cplusplus
 }

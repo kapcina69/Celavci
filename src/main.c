@@ -17,6 +17,9 @@
 #include <zephyr/drivers/i2c.h>
 #include "impulse.h"
 #include "ble_nus.h"
+#include "dac.h"
+#include "mux.h"
+#include "rsens.h"
 
 
 #include <zephyr/bluetooth/bluetooth.h>
@@ -29,45 +32,46 @@
 
 
 
+struct mux_config stim_mux_config = {
+        .spi_dev = STIM_MUX_SPI_DEV,
+        .gpio_dev = STIM_MUX_GPIO_DEV,
+        .le_pin = STIM_MUX_LE_PIN,
+        .clr_pin = STIM_MUX_CLR_PIN,
+        .num_channels = STIM_MUX_NUM_CHANNELS
+    };
 
-/*DAC parameters*/
-#define DAC_ADDR 0x63
-const struct device *i2c_dev;
-
-
-
-
-
-
-
-/* LED definitions - now matching your DTS active-low configuration */
 static const struct gpio_dt_spec led0 = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 
+// --- Deklaracije funkcija ---
+void connected(struct bt_conn *conn, uint8_t err);
+void disconnected(struct bt_conn *conn, uint8_t reason);
 
-// Bluetooth callback struktura (implementacija u ble_nus.c)
+// Bluetooth callback structure (implementation in ble_nus.c)
 static struct bt_conn_cb conn_callbacks = {
     .connected = connected,
     .disconnected = disconnected,
 };
 
-// --- BT događaji ---
+// --- BT events ---
 void connected(struct bt_conn *conn, uint8_t err)
 {
     if (err) {
-        printk("BLE konekcija nije uspela (err %u)\n", err);
+        printk("BLE connection failed (err %u)\n", err);
     } else {
-        printk("BLE povezan\n");
-		gpio_pin_set_dt(&led0, 1);  // Uključi LED0 kada je povezan
-		
+        printk("BLE connected\n");
+        gpio_pin_set_dt(&led1, 1);  // Turn on LED0 when connected
+        
     }
 }
 
 void disconnected(struct bt_conn *conn, uint8_t reason)
 {
-    printk("BLE diskonektovan (razlog %u)\n", reason);
-	gpio_pin_set_dt(&led0, 0);  // Isključi LED0 kada je diskonektovan
+    printk("BLE disconnected (reason %u)\n", reason);
+    gpio_pin_set_dt(&led1, 0);  // Turn off LED0 when disconnected
 }
+
+
 
 
 /* Initialize all GPIOs */
@@ -114,34 +118,17 @@ static int init_gpios(void)
 
 
 
-void dac_set_value(uint16_t value)
-{
-    if (value > 0x03FF) {
-        value = 0x03FF;
-    }
-
-    uint8_t buffer[3];
-    buffer[0] = 0x40;
-    buffer[1] = (value >> 2) & 0xFF;
-    buffer[2] = (value & 0x03) << 6;
-
-    int ret = i2c_write(i2c_dev, buffer, sizeof(buffer), DAC_ADDR);
-    if (ret < 0) {
-        printk("DAC slanje greska: %d\n", ret);
-    } else {
-        printk("DAC postavljen na: %u\n", value);
-    }
-}
 
 void main(void)
 {
     int err;
 
-    /* Initialize LEDs - with proper active-low handling */
+    /* === LED initialization === */
     if (!device_is_ready(led0.port)) {
         printk("LED0 device not ready\n");
         return;
     }
+
     if (!device_is_ready(led1.port)) {
         printk("LED1 device not ready\n");
         return;
@@ -153,41 +140,40 @@ void main(void)
         return;
     }
 
-	if (init_gpios() != 0) {
+    /* === Additional GPIO pins initialization === */
+    if (init_gpios() != 0) {
         printk("GPIO initialization failed!\n");
         return;
     }
-    i2c_dev = DEVICE_DT_GET(DT_NODELABEL(i2c0));
-    if (!device_is_ready(i2c_dev)) {
-        printk("I2C nije spreman!\n");
+    gpio_pin_set_dt(&led0, 1);  // Turn on LED0 when connected
+
+    /* === DC-DC converter activation === */
+    gpio_pin_set_dt(&dc_dc_en, 1);
+    printk("DC-DC converter enabled\n");
+    k_sleep(K_MSEC(100));
+
+    /* === BLE initialization === */
+    err = ble_nus_init();
+    if (err) {
+        printk("BLE initialization failed (%d)\n", err);
         return;
     }
 
-    /* Enable DC-DC converter */
-    gpio_pin_set_dt(&dc_dc_en, 1);
-    printk("DC-DC converter enabled\n");
-
-    k_sleep(K_MSEC(100));
-
-
-    // Inicijalizuj BLE (NUS servis, advertising, itd.)
-    int errbt = ble_nus_init();
-    if (errbt) {
-        return -1;
-    }
-
-    // Registruj BLE konekcione callback-ove
     bt_conn_cb_register(&conn_callbacks);
 
-    /* Main loop */
+    /* === DAC and timer initialization === */
+    dac_init();
+    dac_set_value(80); // Default value
+    init_ntc_adc();
+
+
+    /* === MUX initialization and sending initial data === */
+    mux_init(&stim_mux_config);
+    // start_pulse_sequence(); 
+    /* === Main loop === */
     while (1) {
-        generate_pulse_sequence();        
-        static bool led1_state = false;
-        gpio_pin_set_dt(&led1, led1_state ? 1 : 0);
-        led1_state = !led1_state;
-		dac_set_value(30*amplitude);
 
 
-
+    
     }
 }
