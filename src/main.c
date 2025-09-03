@@ -164,7 +164,7 @@ void main(void)
     /* === DAC and timer initialization === */
     dac_init();
     dac_set_value(80); // Default value
-    k_sleep(K_MSEC(1000));
+    k_sleep(K_MSEC(5000));
 
     rsens_init();
     uint32_t ntc_voltages;
@@ -175,7 +175,7 @@ void main(void)
     while (1) {
 
         // izbaci: uint32_t ntc_voltages;
- 
+        k_sleep(K_MSEC(1000));
     
     }
 }

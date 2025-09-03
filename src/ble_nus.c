@@ -21,7 +21,7 @@ extern uint16_t pulse_patterns[MAX_PATTERNS][PATTERN_LEN];
 extern volatile size_t patterns_count;
 extern volatile size_t number_patter;
 
-
+uint8_t RCE = 0;
 
 
 bool stimulation_running = false;
@@ -179,6 +179,17 @@ static void process_command(const uint8_t *data, uint16_t len)
         }
         return;  
     }
+        /* RCE – pokreni čitanje kontakata (bez argumenata) */
+    if (strcmp(msg, "RCE") == 0) {
+        if (RCE == 0) {
+            RCE = 1;                   // omogući režim čitanja za sledećih 8 impulsa
+            send_response(">RCE;OK<\r\n");
+        } else {
+            send_response(">RCE;BUSY<\r\n");
+        }
+        return;
+    }
+
 
     /* --- Provera osnovnog formata "XX;..." --- */
     if (strlen(msg) < 3 || msg[2] != ';') {
@@ -342,6 +353,7 @@ static void process_command(const uint8_t *data, uint16_t len)
             send_response(ERR_MSG);
         }
     }
+
     else if (strcmp(cmd, "ST") == 0) {
     long v = strtol(arg, NULL, 10);
     if (v >= 1 && v <= 36000) {

@@ -16,6 +16,7 @@ extern uint8_t frequency;              /**< Stimulation frequency (1–40 Hz). *
 extern uint8_t pulse_width;            /**< Pulse width in units (1–10). */
 extern uint8_t temperature;            /**< Heating temperature (25–42 °C). */
 extern uint8_t stim_state;             /**< Stimulation state (0–3). */
+extern uint8_t RCE;
 
 extern bool stimulation_running;  /**< Indicates if stimulation is active. */
 

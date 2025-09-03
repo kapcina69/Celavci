@@ -1,4 +1,5 @@
-// impulse.c
+// impulse.c — stabilni pulsevi u posebnoj niti (irq_lock + k_busy_wait), bez k_work
+
 #include "impulse.h"
 #include "ble_nus.h"
 #include "mux.h"
@@ -7,7 +8,7 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/sys/util.h>   // ARRAY_SIZE
+#include <zephyr/sys/util.h>
 #include <string.h>
 
 /* === Devicetree aliasi === */
@@ -15,74 +16,60 @@
 #define PULSE_ANODE_NODE   DT_ALIAS(pulse_anode)
 #define DC_DC_EN_NODE      DT_ALIAS(dc_dc_en)
 
-// === Globalne promenljive === */
-uint8_t  number_of_pulses         = 0;
-uint32_t frequency_of_impulses    = 4000;   // Hz
-int32_t voltage;
+#if !DT_NODE_HAS_PROP(PULSE_CATHODE_NODE, gpios) || !DT_NODE_HAS_PROP(PULSE_ANODE_NODE, gpios)
+#error "Define pulse_cathode and pulse_anode aliases with a 'gpios' property in DTS"
+#endif
 
-static uint8_t tx_buffer_1[2];
-
-volatile uint32_t stim_duration_s = 1800;  // default 30 min
-
-
-// Default 100 µA za svih 8 parova
-volatile uint16_t pair_amplitude_uA[8] = {
-    100, 100, 100, 100, 100, 100, 100, 100
-};
-
-
-/* === Globalni storage za pattern-e === */
-#define PATTERN_LEN   8
-#define MAX_PATTERNS  16
-
-/* Kolekcija pattern-a: pulse_patterns[i] je niz od 8 parova [anoda(hi) | katoda(lo)] */
-uint16_t pulse_patterns[MAX_PATTERNS][PATTERN_LEN];
-volatile size_t patterns_count = 0;
-
-/* Bira koji pattern iz kolekcije se koristi pri generisanju */
-volatile size_t number_patter = 0;
-
-/* === GPIO definicije iz DT === */
+/* === GPIO iz DT === */
 const struct gpio_dt_spec pulse_cathode = GPIO_DT_SPEC_GET(PULSE_CATHODE_NODE, gpios);
 const struct gpio_dt_spec pulse_anode   = GPIO_DT_SPEC_GET(PULSE_ANODE_NODE, gpios);
 const struct gpio_dt_spec dc_dc_en      = GPIO_DT_SPEC_GET(DC_DC_EN_NODE, gpios);
 
-/* === Pomoćne funkcije === */
-uint32_t hz_to_us(uint32_t frequency_hz)
-{
-    return (frequency_hz == 0) ? 0 : (1000000UL / frequency_hz);
-}
+/* === Globalno stanje (preuzeto iz tvog koda) === */
+uint8_t  number_of_pulses      = 0;
+uint32_t frequency_of_impulses = 4000;   // Hz
+volatile uint32_t stim_duration_s = 1800;  // 30 min
+static uint8_t tx_buffer_1[2];
 
-/* === Stanje mašine === */
-enum pulse_state_e {
-    PULSE_IDLE = 0,
-    PULSE_ANODE_ON,
-    PULSE_CATHODE_ON,
-    PULSE_PAUSE
-};
+/* Default 100 µA za svih 8 parova */
+volatile uint16_t pair_amplitude_uA[8] = { 100,100,100,100,100,100,100,100 };
 
-static volatile enum pulse_state_e pulse_state = PULSE_IDLE;
+/* Pattern-i */
+#define PATTERN_LEN   8
+#define MAX_PATTERNS  16
+uint16_t pulse_patterns[MAX_PATTERNS][PATTERN_LEN];
+volatile size_t patterns_count = 0;
+volatile size_t number_patter  = 0;
 
-static bool s_impulse_inited = false;
-static bool s_impulse_running = false;
+/* Širina jedinice u tvom izrazu: STIMULATION_PULSE_WIDTH_US * pulse_width */
+#ifndef STIMULATION_PULSE_WIDTH_US
+#define STIMULATION_PULSE_WIDTH_US 1
+#endif
 
-/* === Work koji izvršava state machine === */
-static void pulse_work_fn(struct k_work *work);
-K_WORK_DELAYABLE_DEFINE(pulse_work, pulse_work_fn);
+static uint8_t rce_count = 0;       // koliko impulsa je očitano (0..8)
+static uint8_t rce_mask  = 0;       // 8-bit maska rezultata
+#define RCE_THRESHOLD_MV 100        // prag 100 mV
 
+/* Kontrola rada */
+static volatile bool s_impulse_inited  = false;
+static volatile bool s_impulse_running = false;
 
-
+/* === Timer za auto-OFF === */
 static void stim_timer_handler(struct k_timer *t)
 {
     s_impulse_running = false;
     stop_pulse_sequence();
     stimulation_running = false;
-    send_response("OFFOK\r\n");  // automatski OFF kada istekne
+    send_response("OFFOK\r\n");
 }
 K_TIMER_DEFINE(stim_timer, stim_timer_handler, NULL);
 
+/* === Helperi === */
+static inline void set_anode(int level)   { gpio_pin_set_dt(&pulse_anode,   level); }
+static inline void set_cathode(int level) { gpio_pin_set_dt(&pulse_cathode, level); }
 
-/* === Interno: obezbedi bar jedan default pattern ako kolekcija još nema ni jedan === */
+uint32_t hz_to_us(uint32_t hz) { return hz ? (1000000UL / hz) : 0; }
+
 static void ensure_default_pattern(void)
 {
     if (patterns_count == 0) {
@@ -92,135 +79,213 @@ static void ensure_default_pattern(void)
         };
         memcpy(pulse_patterns[0], def, sizeof(def));
         patterns_count = 1;
-        number_patter = 0;
+        number_patter  = 0;
     }
 }
 
-/* === State machine u work kontekstu  === */
-static void pulse_work_fn(struct k_work *w)
+static int pulse_pins_init(void)
 {
-    ARG_UNUSED(w);
-
-    /* Uveri se da imamo bar jedan pattern */
-    ensure_default_pattern();
-
-    /* Zaštita indeksa */
-    size_t sel = number_patter;
-    if (sel >= patterns_count) {
-        sel = 0;
+    if (!device_is_ready(pulse_anode.port) || !device_is_ready(pulse_cathode.port)) {
+        send_response("IMP: GPIO device not ready\r\n");
+        return -ENODEV;
     }
-    const uint16_t *cur = pulse_patterns[sel];
-
-    switch (pulse_state) {
-    case PULSE_ANODE_ON:
-        dac_set_value(pair_amplitude_uA[number_of_pulses] * 0.85); 
-        gpio_pin_set_dt(&pulse_cathode, 0);
-        gpio_pin_set_dt(&pulse_anode,   1);
-        pulse_state = PULSE_CATHODE_ON;
-        k_work_reschedule(&pulse_work, K_USEC(STIMULATION_PULSE_WIDTH_US * pulse_width));
-        break;
-
-    case PULSE_CATHODE_ON:
-    
-        gpio_pin_set_dt(&pulse_anode,   0);
-        gpio_pin_set_dt(&pulse_cathode, 1);
-                // rsens_trigger_measurement();
-        pulse_state = PULSE_PAUSE;
-        k_work_reschedule(&pulse_work, K_USEC(STIMULATION_PULSE_WIDTH_US * pulse_width));
-        break;
-
-    case PULSE_PAUSE:
-
-        gpio_pin_set_dt(&pulse_anode,   0);
-        gpio_pin_set_dt(&pulse_cathode, 0);
-
-        if (number_of_pulses < PATTERN_LEN) {
-            /* Uzmi 16-bitni par: [anoda (MSB)] [katoda (LSB)] */
-            uint16_t pattern = cur[number_of_pulses];
-            tx_buffer_1[0] = (uint8_t)(pattern >> 8);     // anoda
-            tx_buffer_1[1] = (uint8_t)(pattern & 0xFF);   // katoda
-            (void)mux_write(&stim_mux_config, tx_buffer_1, sizeof(tx_buffer_1));
-        }
-
-        number_of_pulses++;
-
-        if (!s_impulse_running) {
-            /* Ako je stop zatražen dok je work u toku – idi u idle i ne re-schedule-uj */
-            pulse_state = PULSE_IDLE;
-            return;
-            
-        }
-
-        if (number_of_pulses >= PATTERN_LEN) {
-            number_of_pulses = 0;
-            pulse_state = PULSE_IDLE;
-            /* Ostavio sam tvoju formulu za raspored posle grupe */
-            k_work_reschedule(&pulse_work, K_USEC(hz_to_us(frequency)-16*STIMULATION_PULSE_WIDTH_US*pulse_width-7*hz_to_us(frequency_of_impulses)-4000));
-        } else {
-            pulse_state = PULSE_ANODE_ON;
-            k_work_reschedule(&pulse_work, K_USEC(hz_to_us(frequency_of_impulses)));
-        }
-        break;
-
-    case PULSE_IDLE:
-    default:
-        gpio_pin_set_dt(&pulse_anode,   0);
-        gpio_pin_set_dt(&pulse_cathode, 0);
-        if (!s_impulse_running) {
-            /* stopirano – ne nastavljamo ciklus */
-            return;
-        }
-        pulse_state = PULSE_ANODE_ON;
-        k_work_reschedule(&pulse_work, K_USEC(hz_to_us(frequency_of_impulses)));
-        break;
+    int err = 0;
+    err |= gpio_pin_configure_dt(&pulse_anode,   GPIO_OUTPUT_INACTIVE);
+    err |= gpio_pin_configure_dt(&pulse_cathode, GPIO_OUTPUT_INACTIVE);
+    if (err) {
+        send_response("IMP: GPIO cfg error\r\n");
+        return err;
     }
+    set_anode(0);
+    set_cathode(0);
+    return 0;
 }
 
-/* === START: idempotentno; ne zakazuje dupli work ciklus === */
-void start_pulse_sequence(void)
+/* === Namera: jedan "trokorak" pulsa: ANODE_ON -> CATHODE_ON -> PAUSE ===
+ * Svaka faza traje width_us; precizno u µs, bez jitter-a (irq_lock + k_busy_wait).
+ */static inline void do_one_pulse_us(uint32_t width_us, uint8_t pair_idx)
 {
-    
+    /* DAC za taj par (po tvom kodu 0.85 skalar) */
+    if (pair_idx < PATTERN_LEN) {
+        uint16_t uA = pair_amplitude_uA[pair_idx];
+        dac_set_value((int)(uA * 0.85));
+    }
 
-    if (s_impulse_running) {
-        /* već radi */
+    /* === 1) ANODE_ON (kritična sekcija) === */
+    unsigned int key = irq_lock();
+    set_cathode(0);
+    set_anode(1);
+    irq_unlock(key);
+
+    k_busy_wait(width_us);  /* faza anode sa uključenim IRQ-ovima */
+
+    /* === 2) CATHODE_ON + RCE merenje tokom katode === */
+    key = irq_lock();
+    set_anode(0);
+    set_cathode(1);
+    irq_unlock(key);
+
+    /* ——— Sada je katoda = 1 ——— */
+    if (RCE == 1 && rce_count < 8) {
+        /* Startuj ADC čitanje dok je katoda visoka */
+        read_rsens();
+        int32_t mv = rsens_get_last_measurement();
+
+        if (mv > RCE_THRESHOLD_MV) {
+            rce_mask |= (1u << (pair_idx & 7));  // bit i za i-ti impuls u grupi
+        }
+        rce_count++;
+
+        if (rce_count == 8) {
+            char msg[24];
+            snprintf(msg, sizeof(msg), "RCE;0x%02X\r\n", rce_mask);
+            send_response(msg);
+
+            /* priprema za neku buduću RCE aktivaciju */
+            RCE = 0;
+            rce_count = 0;
+            rce_mask  = 0;
+        }
+    }
+
+    /* Katodna faza i dalje traje — čekamo trajanje te faze */
+    k_busy_wait(width_us);
+
+    /* === 3) PAUSE (oba 0) === */
+    key = irq_lock();
+    set_cathode(0);
+    set_anode(0);
+    irq_unlock(key);
+
+    k_busy_wait(width_us); /* pauza */
+}
+
+
+/* === Thread koji pravi pulseve stabilno === */
+#define IMP_STACK  2048
+#define IMP_PRIO   6          /* veći prioritet (manji broj) od RSENS niti */
+K_THREAD_STACK_DEFINE(imp_stack, IMP_STACK);
+static struct k_thread imp_thread_data;
+
+static void impulse_thread(void *a, void *b, void *c)
+{
+    ARG_UNUSED(a); ARG_UNUSED(b); ARG_UNUSED(c);
+
+    if (pulse_pins_init() != 0) {
         return;
     }
 
     ensure_default_pattern();
 
-    /* početni MUX obrazac — prvi element aktuelnog pattern-a */
+    /* Pattern selekcija */
     size_t sel = number_patter >= patterns_count ? 0 : number_patter;
-    uint16_t first = pulse_patterns[sel][0];
+    const uint16_t *cur = pulse_patterns[sel];
+
+    /* Početni MUX obrazac (prvi par) */
+    uint16_t first = cur[0];
     tx_buffer_1[0] = (uint8_t)(first >> 8);
     tx_buffer_1[1] = (uint8_t)(first & 0xFF);
     (void)mux_write(&stim_mux_config, tx_buffer_1, sizeof(tx_buffer_1));
 
     number_of_pulses = 0;
-    s_impulse_running = true;
-    s_impulse_inited = true;
-    pulse_state = PULSE_ANODE_ON;
+
+    /* Rasporedi auto-OFF */
     k_timer_start(&stim_timer, K_SECONDS(stim_duration_s), K_NO_WAIT);
 
+    send_response("IMP: ready\r\n");
 
-    k_work_reschedule(&pulse_work, K_USEC(STIMULATION_PULSE_WIDTH_US * pulse_width));
+             uint32_t T_intra_us          = hz_to_us(frequency_of_impulses);                              // period između pulseva
+                               // period između grupa (8)
+
+
+   while (s_impulse_running) {
+    const uint32_t phase_us      = (uint32_t)STIMULATION_PULSE_WIDTH_US * (uint32_t)pulse_width; // 1 faza
+    const uint32_t one_pulse_us  = 3U * phase_us;                                                // ANODE + CATHODE + PAUSE
+    uint32_t T_block_us          = hz_to_us(frequency);  
+    /* pattern & prvi MUX za grupu */
+    size_t sel = number_patter >= patterns_count ? 0 : number_patter;
+    const uint16_t *cur = pulse_patterns[sel];
+
+    /* sabira koliko je trajalo u okviru ove grupe */
+    uint64_t group_elapsed_us = 0;
+
+    for (uint8_t i = 0; i < PATTERN_LEN && s_impulse_running; i++) {
+        /* MUX za tekući par */
+        uint16_t pat = cur[i];
+        tx_buffer_1[0] = (uint8_t)(pat >> 8);
+        tx_buffer_1[1] = (uint8_t)(pat & 0xFF);
+        (void)mux_write(&stim_mux_config, tx_buffer_1, sizeof(tx_buffer_1));
+
+        /* Jedan puls (3 faze, precizno u µs, bez IRQ-a) */
+        do_one_pulse_us(phase_us, i);
+        number_of_pulses++;
+
+        group_elapsed_us += one_pulse_us;
+
+        /* Odmor između pojedinačnih pulseva (osim posle 8-og) */
+        if (i < (PATTERN_LEN - 1)) {
+            uint32_t rest_us = (T_intra_us > one_pulse_us) ? (T_intra_us - one_pulse_us) : 0;
+            group_elapsed_us += rest_us;
+
+            if (rest_us >= 2000) {
+                k_msleep(rest_us / 1000);
+                uint32_t rem = rest_us % 1000;
+                if (rem) k_busy_wait(rem);
+            } else {
+                k_busy_wait(rest_us);
+            }
+        }
+    }
+
+    /* Odmor između grupa (do perioda 'frequency') */
+    uint32_t inter_rest_us = (T_block_us > group_elapsed_us) ? (uint32_t)(T_block_us - group_elapsed_us) : 0;
+    if (inter_rest_us >= 2000) {
+        k_msleep(inter_rest_us / 1000);
+        uint32_t rem = inter_rest_us % 1000;
+        if (rem) k_busy_wait(rem);
+    } else {
+        k_busy_wait(inter_rest_us);
+    }
+
+    /* spremi se za sledeću grupu; brojanje unutar grupe resetuješ po želji */
+    number_of_pulses = 0;
 }
 
-/* === STOP: idempotentno; gasi pinove i ne ostavlja re-schedule u letu === */
+
+    /* Fail-safe: pinovi u 0 */
+    set_anode(0);
+    set_cathode(0);
+}
+
+/* === START/STOP API (idempotentni) === */
+void start_pulse_sequence(void)
+{
+    if (s_impulse_running) return;
+
+    s_impulse_inited  = true;
+    s_impulse_running = true;
+
+    /* Ako imaš DC-DC enable pin, uključi ga pre starta (po potrebi) */
+    if (device_is_ready(dc_dc_en.port)) {
+        gpio_pin_configure_dt(&dc_dc_en, GPIO_OUTPUT_ACTIVE);
+        gpio_pin_set_dt(&dc_dc_en, 1);
+    }
+
+    /* Pokreni nit */
+    k_thread_create(&imp_thread_data, imp_stack, IMP_STACK,
+                    impulse_thread, NULL, NULL, NULL,
+                    IMP_PRIO, 0, K_NO_WAIT);
+    k_thread_name_set(&imp_thread_data, "impulse");
+}
+
 void stop_pulse_sequence(void)
 {
     if (!s_impulse_inited) {
         send_response("IMPULSE NOT INITED\r\n");
-        return; /* ništa da se gasi */
+        return;
     }
-
     s_impulse_running = false;
+    k_timer_stop(&stim_timer);
 
-    /* Otkaži zakazani rad; OK je pozvati i ako nije zakazan */
-    (void)k_work_cancel_delayable(&pulse_work);
 
-    /* Obezbedi “fail-safe” stanje pinova */
-    gpio_pin_set_dt(&pulse_anode,   0);
-    gpio_pin_set_dt(&pulse_cathode, 0);
-
-    pulse_state = PULSE_IDLE;
 }
