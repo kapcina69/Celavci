@@ -3,6 +3,7 @@
 #include "ble_nus.h"
 #include "mux.h"
 #include "dac.h"
+#include "rsens.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
@@ -26,7 +27,7 @@ volatile uint32_t stim_duration_s = 1800;  // default 30 min
 
 // Default 100 µA za svih 8 parova
 volatile uint16_t pair_amplitude_uA[8] = {
-    10, 10, 10, 10, 10, 10, 10, 10
+    100, 100, 100, 100, 100, 100, 100, 100
 };
 
 
@@ -120,14 +121,16 @@ static void pulse_work_fn(struct k_work *w)
         break;
 
     case PULSE_CATHODE_ON:
+    
         gpio_pin_set_dt(&pulse_anode,   0);
         gpio_pin_set_dt(&pulse_cathode, 1);
+                // rsens_trigger_measurement();
         pulse_state = PULSE_PAUSE;
         k_work_reschedule(&pulse_work, K_USEC(STIMULATION_PULSE_WIDTH_US * pulse_width));
         break;
 
     case PULSE_PAUSE:
-        // int err=read_ntcs_voltage_and_report();
+
         gpio_pin_set_dt(&pulse_anode,   0);
         gpio_pin_set_dt(&pulse_cathode, 0);
 

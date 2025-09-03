@@ -164,16 +164,18 @@ void main(void)
     /* === DAC and timer initialization === */
     dac_init();
     dac_set_value(80); // Default value
-    init_ntc_adc();
+    k_sleep(K_MSEC(1000));
 
-
+    rsens_init();
+    uint32_t ntc_voltages;
     /* === MUX initialization and sending initial data === */
     mux_init(&stim_mux_config);
     // start_pulse_sequence(); 
     /* === Main loop === */
     while (1) {
 
-
+        // izbaci: uint32_t ntc_voltages;
+ 
     
     }
 }

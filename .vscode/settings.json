@@ -1,6 +1,7 @@
 {
     "nrf-connect.applications": [],
     "files.associations": {
-        "math.h": "c"
+        "math.h": "c",
+        "hrs.h": "c"
     }
 }

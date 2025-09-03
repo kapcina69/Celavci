@@ -257,36 +257,36 @@ static void process_command(const uint8_t *data, uint16_t len)
      * Komanda XC – Set current amplitude per each channel
      * Format: XC;x1 x2 x3 x4 x5 x6 x7 x8  (decimal 5–200)
      * ============================================================ */
-/* === XC; x1 x2 x3 x4 x5 x6 x7 x8  (5..200, raw) === */
-else if (strcmp(cmd, "XC") == 0) {
-    char buf[128];
+    /* === XC; x1 x2 x3 x4 x5 x6 x7 x8  (5..200, raw) === */
+    else if (strcmp(cmd, "XC") == 0) {
+        char buf[128];
 
-    /* Kopiraj ARG (deo posle ';') i normalizuj separatore */
-    size_t n = strnlen(arg, sizeof(buf) - 1);
-    memcpy(buf, arg, n);
-    buf[n] = '\0';
+        /* Kopiraj ARG (deo posle ';') i normalizuj separatore */
+        size_t n = strnlen(arg, sizeof(buf) - 1);
+        memcpy(buf, arg, n);
+        buf[n] = '\0';
 
-    /* Opciono: zameni zarez tab-om/razmakom ako ikad pošalješ 'XC;50,60,...' */
-    for (char *s = buf; *s; ++s) {
-        if (*s == ',') *s = ' ';
-    }
-
-    uint16_t tmp_vals[8];
-    int count = 0;
-
-    char *saveptr = NULL;
-    for (char *tok = strtok_r(buf, " \t", &saveptr);
-         tok && count < 8;
-         tok = strtok_r(NULL, " \t", &saveptr)) {
-
-        char *endp = NULL;
-        long v = strtol(tok, &endp, 10);
-
-        /* Validan samo ako je ceo token broj (bez slova) i u opsegu */
-        if (endp == tok || *endp != '\0' || v < 5 || v > 200) {
-            send_response(">SC;ERR<\r\n");
-            return;
+        /* Opciono: zameni zarez tab-om/razmakom ako ikad pošalješ 'XC;50,60,...' */
+        for (char *s = buf; *s; ++s) {
+            if (*s == ',') *s = ' ';
         }
+
+        uint16_t tmp_vals[8];
+        int count = 0;
+
+        char *saveptr = NULL;
+        for (char *tok = strtok_r(buf, " \t", &saveptr);
+            tok && count < 8;
+            tok = strtok_r(NULL, " \t", &saveptr)) {
+
+            char *endp = NULL;
+            long v = strtol(tok, &endp, 10);
+
+            /* Validan samo ako je ceo token broj (bez slova) i u opsegu */
+            if (endp == tok || *endp != '\0' || v < 5 || v > 200) {
+                send_response(">SC;ERR<\r\n");
+                return;
+            }
 
         tmp_vals[count++] = (uint16_t)v;   // RAW 5..200, bez skaliranja
     }
