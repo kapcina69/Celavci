@@ -20,6 +20,7 @@
 #include "dac.h"
 #include "mux.h"
 #include "rsens.h"
+#include "fuel_gauge.h"
 
 
 #include <zephyr/bluetooth/bluetooth.h>
@@ -42,6 +43,8 @@ struct mux_config stim_mux_config = {
 
 static const struct gpio_dt_spec led0 = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
+const struct gpio_dt_spec kill= GPIO_DT_SPEC_GET(DT_ALIAS(kill), gpios); 
+const struct gpio_dt_spec pb_mcu= GPIO_DT_SPEC_GET(DT_ALIAS(pb_mcu), gpios);
 
 // --- Deklaracije funkcija ---
 void connected(struct bt_conn *conn, uint8_t err);
@@ -119,9 +122,12 @@ static int init_gpios(void)
 
 
 
+
 void main(void)
 {
     int err;
+    gpio_pin_set_dt(&kill, 0); // Set KILL pin low to enable the device
+    gpio_pin_set_dt(&pb_mcu, 0); // Set PB_MCU pin high (not pressed)
 
     /* === LED initialization === */
     if (!device_is_ready(led0.port)) {
@@ -135,7 +141,8 @@ void main(void)
     }
 
     if (gpio_pin_configure_dt(&led0, GPIO_OUTPUT_INACTIVE) < 0 ||
-        gpio_pin_configure_dt(&led1, GPIO_OUTPUT_INACTIVE) < 0) {
+        gpio_pin_configure_dt(&led1, GPIO_OUTPUT_INACTIVE) < 0 ||
+        gpio_pin_configure_dt(&kill, GPIO_OUTPUT_INACTIVE) < 0) { //
         printk("Failed to configure LEDs\n");
         return;
     }
@@ -165,17 +172,19 @@ void main(void)
     dac_init();
     dac_set_value(80); // Default value
     k_sleep(K_MSEC(5000));
-
+    // debug_i2c_probe();
     rsens_init();
     uint32_t ntc_voltages;
     /* === MUX initialization and sending initial data === */
     mux_init(&stim_mux_config);
-    // start_pulse_sequence(); 
+
+    bq27220_init();   
     /* === Main loop === */
     while (1) {
 
-        // izbaci: uint32_t ntc_voltages;
-        k_sleep(K_MSEC(1000));
+        bq27220_read_basic();  
+        k_sleep(K_SECONDS(3));
+
     
     }
 }

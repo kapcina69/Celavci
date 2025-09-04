@@ -14,42 +14,43 @@
         zephyr,code-partition = &slot0_partition;
     };
 
-
     zephyr,user {
         io-channels = <&adc 0>;
     };
 
     leds {
         compatible = "gpio-leds";
-        led_green: led_green {
-            gpios = <&gpio0 2 GPIO_ACTIVE_LOW>;
-        };
-        led_blue: led_blue {
-            gpios = <&gpio0 3 GPIO_ACTIVE_LOW>;
-        };
-        led_red: led_red {
-            gpios = <&gpio0 30 GPIO_ACTIVE_LOW>;
-        };
-        led3: led_3 {
-            status = "disabled";
-        };
+        led_green: led_green { gpios = <&gpio0  2 GPIO_ACTIVE_LOW>; };
+        led_blue:  led_blue  { gpios = <&gpio0  3 GPIO_ACTIVE_LOW>; };
+        led_red:   led_red   { gpios = <&gpio0 30 GPIO_ACTIVE_LOW>; };
+        led3: led_3 { status = "disabled"; };
     };
 
-    /* Ostali korisni GPIO-i; 8/13/14/15 izbačeni (sad su PWM) */
+    /* Ostali korisni GPIO-i */
     custom_gpio_out {
         compatible = "gpio-keys";
-        pulse_cathode: pulse_cathode { gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>; };
-        pulse_anode:  pulse_anode  { gpios = <&gpio0 15 GPIO_ACTIVE_HIGH>; };
-        dc_dc_en:     dc_dc_en     { gpios = <&gpio0 4 GPIO_ACTIVE_HIGH>; };
+        pulse_cathode: pulse_cathode { gpios = <&gpio0  7 GPIO_ACTIVE_HIGH>; };
+        pulse_anode:   pulse_anode   { gpios = <&gpio0 15 GPIO_ACTIVE_HIGH>; };
+        dc_dc_en:      dc_dc_en      { gpios = <&gpio0  4 GPIO_ACTIVE_HIGH>; };
+
+        /* DODATO: PB_MCU (simulira pritisak tastera) i KILL ka LTC2950 */
+        pb_mcu: pb_mcu { gpios = <&gpio0 29 GPIO_ACTIVE_LOW>; };
+        kill_ltc2950: kill { gpios = <&gpio0  9 GPIO_ACTIVE_LOW>; };
     };
 
     aliases {
         led0 = &led_green;
         led1 = &led_blue;
         led2 = &led_red;
+
         pulse-cathode = &pulse_cathode;
-        pulse-anode  = &pulse_anode;
+        pulse-anode   = &pulse_anode;
         dc-dc-en      = &dc_dc_en;
+
+        /* DODATO: aliasi za PB_MCU i KILL */
+        pb-mcu = &pb_mcu;
+        kill   = &kill_ltc2950;
+
         i2c0 = &i2c0;
     };
 };
@@ -100,19 +101,16 @@
         };
     };
 
-    /* PWM0: ch0->P0.08, ch1->P0.13, ch2->P0.14, ch3->P0.15 */
+    /* PWM0 */
     pwm0_default: pwm0_default {
-        group1 {
-            psels = <NRF_PSEL(PWM_OUT0, 0, 31)>;
-        };
+        group1 { psels = <NRF_PSEL(PWM_OUT0, 0, 31)>; };
     };
-        pwm0_sleep: pwm0_sleep {
+    pwm0_sleep: pwm0_sleep {
         group1 {
             psels = <NRF_PSEL(PWM_OUT0, 0, 31)>;
             low-power-enable;
         };
     };
-
 };
 
 &i2c0 {
@@ -129,9 +127,19 @@
         status = "okay";
         #io-channel-cells = <1>;
     };
+
+    fuelgauge: bq27220@55 {
+        compatible = "ti,bq274xx";
+        reg = <0x55>;
+        status = "okay";
+        design-voltage = <3700>;      /* mV */
+        design-capacity = <2200>;     /* mAh */
+        taper-current = <100>;        /* mA */
+        terminate-voltage = <3200>;   /* mV */
+    };
 };
 
-/* MULTIPLEXER (SPIM1 bez MISO – OK ako ga ne koristiš) */
+/* MULTIPLEXER (SPIM1 bez MISO) */
 &spi1 {
     compatible = "nordic,nrf-spim";
     status = "okay";
@@ -146,8 +154,6 @@
     };
 };
 
-
-
 &pwm0 {
     status = "okay";
     pinctrl-0 = <&pwm0_default>;
@@ -155,15 +161,9 @@
     pinctrl-names = "default", "sleep";
 };
 
-
 /* GPIO and GPIOTE */
-&gpio0 {
-    status = "okay";
-};
-
-&gpiote {
-    status = "okay";
-};
+&gpio0 { status = "okay"; };
+&gpiote { status = "okay"; };
 
 /* Flash Partition Layout */
 &flash0 {
@@ -172,29 +172,10 @@
         #address-cells = <1>;
         #size-cells = <1>;
 
-        boot_partition: partition@0 {
-            label = "mcuboot";
-            reg = <0x00000 0x0C000>;
-        };
-
-        slot0_partition: partition@c000 {
-            label = "image-0";
-            reg = <0x0C000 0x72000>;
-        };
-
-        slot1_partition: partition@7e000 {
-            label = "image-1";
-            reg = <0x7E000 0x72000>;
-        };
-
-        scratch_partition: partition@f0000 {
-            label = "image-scratch";
-            reg = <0xF0000 0x0A000>;
-        };
-
-        storage_partition: partition@fa000 {
-            label = "storage";
-            reg = <0xFA000 0x06000>;
-        };
+        boot_partition: partition@0      { label = "mcuboot";       reg = <0x00000 0x0C000>; };
+        slot0_partition: partition@c000  { label = "image-0";       reg = <0x0C000 0x72000>; };
+        slot1_partition: partition@7e000 { label = "image-1";       reg = <0x7E000 0x72000>; };
+        scratch_partition: partition@f0000 { label = "image-scratch"; reg = <0xF0000 0x0A000>; };
+        storage_partition: partition@fa000 { label = "storage";       reg = <0xFA000 0x06000>; };
     };
 };
