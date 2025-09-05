@@ -46,6 +46,7 @@ static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 const struct gpio_dt_spec kill= GPIO_DT_SPEC_GET(DT_ALIAS(kill), gpios); 
 const struct gpio_dt_spec pb_mcu= GPIO_DT_SPEC_GET(DT_ALIAS(pb_mcu), gpios);
 
+
 // --- Deklaracije funkcija ---
 void connected(struct bt_conn *conn, uint8_t err);
 void disconnected(struct bt_conn *conn, uint8_t reason);
@@ -179,6 +180,9 @@ void main(void)
     mux_init(&stim_mux_config);
 
     bq27220_init();   
+
+
+
     /* === Main loop === */
     while (1) {
 
