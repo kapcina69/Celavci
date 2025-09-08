@@ -114,6 +114,50 @@ static int pulse_pins_init(void)
     return 0;
 }
 
+#include <stdint.h>
+
+#define BURST_LEN         8
+#define MEASURE_EVERY_N   3  // meri svaku treću povorku (1,4,7,...)
+
+// 1..8: tekući impuls u povorci
+static uint8_t  pulse_in_burst = 1;
+// 1..8: koji impuls merimo u "mernoj" povorci
+static uint8_t  measure_idx    = 1;
+// 1,2,3,... redni broj povorke od starta
+static uint32_t burst_seq      = 1;
+
+static inline bool is_measure_burst(void)
+{
+    // merni su 1., 4., 7., ... tj. (burst_seq-1) % 3 == 0
+    return ((burst_seq - 1u) % MEASURE_EVERY_N) == 0u;
+}
+
+static inline void burst_advance(void)
+{
+    if (++pulse_in_burst > BURST_LEN) {
+        // završena povorka
+        pulse_in_burst = 1;
+
+        // ako je OVA povorka bila merni ciklus, onda pređi na sledeći impuls za merenje
+        if (((burst_seq - 1u) % MEASURE_EVERY_N) == 0u) {
+            if (++measure_idx > BURST_LEN) {
+                measure_idx = 1;
+            }
+        }
+        // pređi na sledeću povorku
+        burst_seq++;
+    }
+}
+
+static inline void reset_burst_schedule(void)
+{
+    pulse_in_burst = 1;
+    measure_idx    = 1;
+    burst_seq      = 1;
+}
+
+
+
 /* === Namera: jedan "trokorak" pulsa: ANODE_ON -> CATHODE_ON -> PAUSE ===
  * Svaka faza traje width_us; precizno u µs, bez jitter-a (irq_lock + k_busy_wait).
  */
@@ -126,7 +170,7 @@ static inline void do_one_pulse_us(uint32_t width_us, uint8_t pair_idx)
     /* DAC za taj par (po tvom kodu 0.85 skalar) */
     if (pair_idx < PATTERN_LEN) {
         uint16_t uA = pair_amplitude_uA[pair_idx];
-        dac_set_value((int)(uA * 0.85));
+        dac_set_value((int)(uA * 0.85f));
     }
 
     /* === 1) ANODE_ON (kritična sekcija) === */
@@ -135,41 +179,20 @@ static inline void do_one_pulse_us(uint32_t width_us, uint8_t pair_idx)
     set_anode(1);
     irq_unlock(key);
 
-    k_busy_wait(width_us);  /* faza anode sa uključenim IRQ-ovima */
+    k_busy_wait(width_us);  /* anoda */
 
-    /* === 2) CATHODE_ON + RCE merenje tokom katode === */
+    /* === 2) CATHODE_ON + (uslovno) merenje tokom katode === */
     key = irq_lock();
     set_anode(0);
     set_cathode(1);
     irq_unlock(key);
-    saadc_trigger_once_ppi();  // pokreni ADC čitanje
-    
 
-    /* ——— Sada je katoda = 1 ——— */
-    if (RCE == 1 && rce_count < 8) {
-        /* Startuj ADC čitanje dok je katoda visoka */
-        // read_rsens();
-        // int32_t mv = rsens_get_last_measurement();
-
-        // if (mv > RCE_THRESHOLD_MV) {
-        //     rce_mask |= (1u << (pair_idx & 7));  // bit i za i-ti impuls u grupi
-        // }
-        rce_count++;
-
-        if (rce_count == 8) {
-            char msg[24];
-            snprintf(msg, sizeof(msg), "RCE;0x%02X\r\n", rce_mask);
-            send_response(msg);
-
-            /* priprema za neku buduću RCE aktivaciju */
-            RCE = 0;
-            rce_count = 0;
-            rce_mask  = 0;
-        }
+    // Meri samo u "mernim" povorkama i samo na planiranom impulsu
+    if (is_measure_burst() && (pulse_in_burst == measure_idx)) {
+        saadc_trigger_once_ppi();  // bez kašnjenja (PPi/DPPI)
     }
 
-    /* Katodna faza i dalje traje — čekamo trajanje te faze */
-    k_busy_wait(width_us);
+    k_busy_wait(width_us);  /* katoda */
 
     /* === 3) PAUSE (oba 0) === */
     key = irq_lock();
@@ -177,8 +200,12 @@ static inline void do_one_pulse_us(uint32_t width_us, uint8_t pair_idx)
     set_anode(0);
     irq_unlock(key);
 
-    k_busy_wait(width_us); /* pauza */
+    k_busy_wait(width_us);  /* pauza */
+
+    /* pomeri brojače */
+    burst_advance();
 }
+
 
 
 /* === Thread koji pravi pulseve stabilno === */
