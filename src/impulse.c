@@ -5,6 +5,7 @@
 #include "mux.h"
 #include "dac.h"
 #include "rsens.h"
+#include "nrfx_adc.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
@@ -89,9 +90,14 @@ static void ensure_default_pattern(void)
         number_patter  = 0;
     }
 }
-
+static void my_adc_cb(int16_t s)
+{
+    // LOG_INF("One-shot SAADC sample = %d", s);
+}
 static int pulse_pins_init(void)
 {
+    saadc_ppi_oneshot_init();
+    // saadc_set_callback(my_adc_cb);
     if (!device_is_ready(pulse_anode.port) || !device_is_ready(pulse_cathode.port)) {
         send_response("IMP: GPIO device not ready\r\n");
         return -ENODEV;
@@ -112,91 +118,66 @@ static int pulse_pins_init(void)
  * Svaka faza traje width_us; precizno u µs, bez jitter-a (irq_lock + k_busy_wait).
  */
 
+/* === Namera: jedan "trokorak" pulsa: ANODE_ON -> CATHODE_ON -> PAUSE ===
+ * Svaka faza traje width_us; precizno u µs, bez jitter-a (irq_lock + k_busy_wait).
+ */
 static inline void do_one_pulse_us(uint32_t width_us, uint8_t pair_idx)
 {
-    /* (A) Zakazivanje 5 s "tihe" sonde */
-    uint32_t now_ms = k_uptime_get_32();
-    if (next_silent_probe_ms == 0) {
-        next_silent_probe_ms = now_ms + 5000;           // prvi put nakon 5 s
-    } else if (!silent_probe_active && (int32_t)(now_ms - next_silent_probe_ms) >= 0) {
-        silent_probe_active = true;                      // start nove tihe sonde (8 impulsa)
-        silent_count        = 0;
-        silent_mask         = 0;
-        next_silent_probe_ms = now_ms + 5000;           // sledeća sonda za 5 s
-    }
-
-    /* DAC po paru (tvoj postojeći kod) */
+    /* DAC za taj par (po tvom kodu 0.85 skalar) */
     if (pair_idx < PATTERN_LEN) {
         uint16_t uA = pair_amplitude_uA[pair_idx];
         dac_set_value((int)(uA * 0.85));
     }
 
-    /* 1) ANODE_ON */
+    /* === 1) ANODE_ON (kritična sekcija) === */
     unsigned int key = irq_lock();
     set_cathode(0);
     set_anode(1);
     irq_unlock(key);
-    k_busy_wait(width_us);
 
-    /* 2) CATHODE_ON (merenje se radi JEDINO dok je katoda=1) */
+    k_busy_wait(width_us);  /* faza anode sa uključenim IRQ-ovima */
+
+    /* === 2) CATHODE_ON + RCE merenje tokom katode === */
     key = irq_lock();
     set_anode(0);
     set_cathode(1);
     irq_unlock(key);
+    saadc_trigger_once_ppi();  // pokreni ADC čitanje
+    
 
-    /* Da li treba da merimo u ovom impulsu? */
-    bool do_meas_rce    = (RCE == 1) && (rce_count   < 8);
-    bool do_meas_silent =  silent_probe_active && (silent_count < 8);
+    /* ——— Sada je katoda = 1 ——— */
+    if (RCE == 1 && rce_count < 8) {
+        /* Startuj ADC čitanje dok je katoda visoka */
+        // read_rsens();
+        // int32_t mv = rsens_get_last_measurement();
 
-    if (do_meas_rce || do_meas_silent) {
-        read_rsens();                                        // blokirajuće, ali kratko
-        int32_t mv = rsens_get_last_measurement();
+        // if (mv > RCE_THRESHOLD_MV) {
+        //     rce_mask |= (1u << (pair_idx & 7));  // bit i za i-ti impuls u grupi
+        // }
+        rce_count++;
 
-        uint8_t bit = (1u << (pair_idx & 7));
-        if (mv > RCE_THRESHOLD_MV) {
-            if (do_meas_rce)    { rce_mask    |= bit; }
-            if (do_meas_silent) { silent_mask |= bit; }
+        if (rce_count == 8) {
+            char msg[24];
+            snprintf(msg, sizeof(msg), "RCE;0x%02X\r\n", rce_mask);
+            send_response(msg);
+
+            /* priprema za neku buduću RCE aktivaciju */
+            RCE = 0;
+            rce_count = 0;
+            rce_mask  = 0;
         }
-
-        if (do_meas_rce) {
-            rce_count++;
-            if (rce_count == 8) {
-                char msg[24];
-                snprintf(msg, sizeof(msg), "RCE;0x%02X\r\n", rce_mask);
-                send_response(msg);
-
-                /* Ako želiš da RCE ostane isključivo pod BLE kontrolom,
-                   OBRIŠI narednu liniju; u tom slučaju dodaj BLE komandu za reset. */
-                RCE = 0;  /* <- ukloni ako ne želiš auto-clear */
-
-                rce_count = 0;
-                rce_mask  = 0;
-            }
-        }
-
-        if (do_meas_silent) {
-            silent_count++;
-            if (silent_count == 8) {
-                /* TIHA sonda završena: ne šaljemo ništa i ne diramo RCE */
-                silent_probe_active = false;
-                silent_count = 0;
-                silent_mask  = 0;
-            }
-        }
-        if(width_us < 500){
-            k_busy_wait(1);
-        }else{
-            k_busy_wait(width_us-400); // minimum 500us čitanje
-        }
-    }else{
-        k_busy_wait(width_us);   /* trajanje katodne faze */
     }
-    /* 3) PAUSE */
+
+    /* Katodna faza i dalje traje — čekamo trajanje te faze */
+    k_busy_wait(width_us);
+
+    /* === 3) PAUSE (oba 0) === */
     key = irq_lock();
     set_cathode(0);
     set_anode(0);
     irq_unlock(key);
-    k_busy_wait(width_us);
+
+    k_busy_wait(width_us); /* pauza */
 }
 
 

@@ -14,9 +14,9 @@
         zephyr,code-partition = &slot0_partition;
     };
 
-    zephyr,user {
-        io-channels = <&adc 0>;
-    };
+    // zephyr,user {
+    //     io-channels = <&adc 0>;
+    // };
 
     leds {
         compatible = "gpio-leds";
@@ -32,6 +32,7 @@
         pulse_cathode: pulse_cathode { gpios = <&gpio0  7 GPIO_ACTIVE_HIGH>; };
         pulse_anode:   pulse_anode   { gpios = <&gpio0 15 GPIO_ACTIVE_HIGH>; };
         dc_dc_en:      dc_dc_en      { gpios = <&gpio0  4 GPIO_ACTIVE_HIGH>; };
+        buzz:          buzz          { gpios = <&gpio0 28 GPIO_ACTIVE_HIGH>; };
 
         /* DODATO: PB_MCU (simulira pritisak tastera) i KILL ka LTC2950 */
         pb_mcu: pb_mcu { gpios = <&gpio0 29 GPIO_ACTIVE_LOW>; };
@@ -50,25 +51,25 @@
         /* DODATO: aliasi za PB_MCU i KILL */
         pb-mcu = &pb_mcu;
         kill   = &kill_ltc2950;
-
+        buzz   = &buzz;
         i2c0 = &i2c0;
     };
 };
 
-&adc {
-    status = "okay";
-    #address-cells = <1>;
-    #size-cells = <0>;
+// &adc {
+//     status = "okay";
+//     #address-cells = <1>;
+//     #size-cells = <0>;
 
-    channel@0 {
-        reg = <0>;
-        zephyr,gain = "ADC_GAIN_1_6";
-        zephyr,reference = "ADC_REF_INTERNAL";
-        zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
-        zephyr,input-positive = <NRF_SAADC_AIN3>;  // P0.02
-        zephyr,resolution = <12>;
-    };
-};
+//     channel@0 {
+//         reg = <0>;
+//         zephyr,gain = "ADC_GAIN_1_6";
+//         zephyr,reference = "ADC_REF_INTERNAL";
+//         zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+//         zephyr,input-positive = <NRF_SAADC_AIN3>;  // P0.02
+//         zephyr,resolution = <12>;
+//     };
+// };
 
 &pinctrl {
     i2c0_default: i2c0_default {

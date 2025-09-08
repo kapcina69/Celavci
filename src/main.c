@@ -21,6 +21,7 @@
 #include "mux.h"
 #include "rsens.h"
 #include "fuel_gauge.h"
+#include "nrfx_adc.h"
 
 
 #include <zephyr/bluetooth/bluetooth.h>
@@ -45,6 +46,9 @@ static const struct gpio_dt_spec led0 = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 const struct gpio_dt_spec kill= GPIO_DT_SPEC_GET(DT_ALIAS(kill), gpios); 
 const struct gpio_dt_spec pb_mcu= GPIO_DT_SPEC_GET(DT_ALIAS(pb_mcu), gpios);
+const struct gpio_dt_spec buzz= GPIO_DT_SPEC_GET(DT_ALIAS(buzz), gpios);
+
+
 
 
 // --- Deklaracije funkcija ---
@@ -64,7 +68,7 @@ void connected(struct bt_conn *conn, uint8_t err)
         printk("BLE connection failed (err %u)\n", err);
     } else {
         printk("BLE connected\n");
-        gpio_pin_set_dt(&led1, 1);  // Turn on LED0 when connected
+        // gpio_pin_set_dt(&led1, 1);  // Turn on LED0 when connected
         
     }
 }
@@ -72,7 +76,7 @@ void connected(struct bt_conn *conn, uint8_t err)
 void disconnected(struct bt_conn *conn, uint8_t reason)
 {
     printk("BLE disconnected (reason %u)\n", reason);
-    gpio_pin_set_dt(&led1, 0);  // Turn off LED0 when disconnected
+    // gpio_pin_set_dt(&led1, 0);  // Turn off LED0 when disconnected
 }
 
 
@@ -172,14 +176,18 @@ void main(void)
     /* === DAC and timer initialization === */
     dac_init();
     dac_set_value(80); // Default value
+    gpio_pin_set_dt(&buzz, 1); // Ensure buzzer is off
     k_sleep(K_MSEC(5000));
+    gpio_pin_set_dt(&buzz, 0); // Buzz for 5 seconds
     // debug_i2c_probe();
-    rsens_init();
+    // rsens_init();
     uint32_t ntc_voltages;
     /* === MUX initialization and sending initial data === */
     mux_init(&stim_mux_config);
 
     bq27220_init();   
+
+    // start_nrfx_adc(); // Start the ADC sampling chain (PPI + Timer + SAADC)
 
 
 
