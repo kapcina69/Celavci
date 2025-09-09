@@ -58,6 +58,10 @@ static uint8_t rce_count = 0;       // koliko impulsa je očitano (0..8)
 static uint8_t rce_mask  = 0;       // 8-bit maska rezultata
 #define RCE_THRESHOLD_MV 100        // prag 100 mV
 
+static uint8_t RCE_FIRST = 0;  
+
+
+
 /* Kontrola rada */
 static volatile bool s_impulse_inited  = false;
 static volatile bool s_impulse_running = false;
@@ -117,7 +121,7 @@ static int pulse_pins_init(void)
 #include <stdint.h>
 
 #define BURST_LEN         8
-#define MEASURE_EVERY_N   3  // meri svaku treću povorku (1,4,7,...)
+uint8_t MEASURE_EVERY_N=3;  // meri svaku treću povorku (1,4,7,...)
 
 // 1..8: tekući impuls u povorci
 static uint8_t  pulse_in_burst = 1;
@@ -156,7 +160,20 @@ static inline void reset_burst_schedule(void)
     burst_seq      = 1;
 }
 
+void report_last_burst(void)
+{
+    uint8_t mask;
+    if (saadc_get_last_burst(&mask)) {
+        /* npr. pošalji preko BLE u formatu RCE;xx (hex) */
+        char msg[16];
+        snprintk(msg, sizeof(msg), "RCE;%02X", mask);
+        send_response(msg);
 
+    } else {
+        send_response("RCE;NA");   /* još nema kompletne povorke */
+
+    }
+}
 
 /* === Namera: jedan "trokorak" pulsa: ANODE_ON -> CATHODE_ON -> PAUSE ===
  * Svaka faza traje width_us; precizno u µs, bez jitter-a (irq_lock + k_busy_wait).
@@ -173,6 +190,15 @@ static inline void do_one_pulse_us(uint32_t width_us, uint8_t pair_idx)
         dac_set_value((int)(uA * 0.85f));
     }
 
+    if(RCE==1){
+        report_last_burst();
+        RCE=0;
+    }
+    if(new_frequency){
+        new_frequency = 0;
+        reset_burst_schedule();
+    }
+
     /* === 1) ANODE_ON (kritična sekcija) === */
     unsigned int key = irq_lock();
     set_cathode(0);
@@ -187,8 +213,12 @@ static inline void do_one_pulse_us(uint32_t width_us, uint8_t pair_idx)
     set_cathode(1);
     irq_unlock(key);
 
+
     // Meri samo u "mernim" povorkama i samo na planiranom impulsu
-    if (is_measure_burst() && (pulse_in_burst == measure_idx)) {
+    if(frequency==1 || frequency==2 || frequency==3 || frequency==4){
+        saadc_trigger_once_ppi();  
+    }
+    else if (is_measure_burst() && (pulse_in_burst == measure_idx)) {
         saadc_trigger_once_ppi();  // bez kašnjenja (PPi/DPPI)
     }
 
@@ -221,6 +251,7 @@ static void impulse_thread(void *a, void *b, void *c)
     if (pulse_pins_init() != 0) {
         return;
     }
+
 
     ensure_default_pattern();
 

@@ -18,6 +18,8 @@ extern uint8_t temperature;            /**< Heating temperature (25–42 °C). *
 extern uint8_t stim_state;             /**< Stimulation state (0–3). */
 extern uint8_t RCE;
 
+extern uint8_t new_frequency;  /**< Flag indicating if frequency was updated. */
+
 extern bool stimulation_running;  /**< Indicates if stimulation is active. */
 
 /**

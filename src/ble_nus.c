@@ -144,6 +144,8 @@ uint8_t pulse_width = 25;
 uint8_t temperature = 38;
 uint8_t stim_state = 0;
 
+uint8_t new_frequency = 0;
+
 static void process_command(const uint8_t *data, uint16_t len)
 {
     char msg[160];
@@ -338,6 +340,7 @@ static void process_command(const uint8_t *data, uint16_t len)
     if (strcmp(cmd, "SF") == 0) {
         if (value >= 1 && value <= 100) {
             frequency = (uint8_t)value;
+            new_frequency = 1;
             send_response(OK_MSG);
         } else {
             send_response(ERR_MSG);

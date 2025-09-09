@@ -68,7 +68,7 @@ void connected(struct bt_conn *conn, uint8_t err)
         printk("BLE connection failed (err %u)\n", err);
     } else {
         printk("BLE connected\n");
-        // gpio_pin_set_dt(&led1, 1);  // Turn on LED0 when connected
+        gpio_pin_set_dt(&led1, 1);  // Turn on LED0 when connected
         
     }
 }
@@ -76,7 +76,7 @@ void connected(struct bt_conn *conn, uint8_t err)
 void disconnected(struct bt_conn *conn, uint8_t reason)
 {
     printk("BLE disconnected (reason %u)\n", reason);
-    // gpio_pin_set_dt(&led1, 0);  // Turn off LED0 when disconnected
+    gpio_pin_set_dt(&led1, 0);  // Turn off LED0 when disconnected
 }
 
 
