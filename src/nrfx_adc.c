@@ -24,7 +24,7 @@ LOG_MODULE_REGISTER(SAADC_1SHOT, LOG_LEVEL_INF);
 #define SAADC_CYCLE_TIMEOUT_MS  5u  /* ako DONE ne stigne za ovoliko ms -> abort */
 
 /* ====== Periodično održavanje ====== */
-#define SAADC_MAINT_PERIOD_MS   (120u * 1000u) /* ~2 min */
+#define SAADC_MAINT_PERIOD_MS   (30u * 1000u) /* ~0.5 min */
 #define SAADC_ABORT_STREAK_REINIT 3            /* posle ovoliko aborta zaredom -> reinit */
 
 /* ====== GPIO izlaz: P0.28 (PO POTREBI PROMENI BROJ) ====== */
@@ -114,6 +114,17 @@ static void gain_to_mul(nrf_saadc_gain_t g, uint32_t *num, uint32_t *den)
     case NRF_SAADC_GAIN4:   *num = 1; *den = 4; break;
     default:                *num = 1; *den = 1; break;
     }
+}
+
+static inline void drive_out_on_change(bool high)
+{
+    /* Pročitaj trenutni HW status pina i upiši samo ako se razlikuje */
+    const uint32_t is_high = (NRF_P0->OUT & OUT_PIN_MASK) ? 1u : 0u;
+    if (is_high == (uint32_t)high) {
+        return; /* već je u željenom stanju – bez upisa */
+    }
+    if (high) { NRF_P0->OUTSET = OUT_PIN_MASK; }
+    else       { NRF_P0->OUTCLR = OUT_PIN_MASK; }
 }
 
 /* ====== ISR: kratak, determinističan ====== */
@@ -346,6 +357,7 @@ int saadc_trigger_once_ppi(void)
     /* 2) Uzmi semafor sa kratkim tajmautom (smanjuje false-BUSY šum) */
     if (k_sem_take(&g_saadc_idle_sem, K_USEC(200)) != 0) {
         send_response("BUSY");
+        saadc_reinit_safely();
         return -EBUSY;
     }
 
