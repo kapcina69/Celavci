@@ -109,3 +109,13 @@ void bq27220_read_basic(void)
              mv, soc_pct, (int)(t_x10c/10), (int)abs(t_x10c%10), (int)i_ma);
     send_response(out);
 }
+
+int fuel_gauge_get_soc(uint16_t *soc)
+{
+    uint16_t raw;
+    int ret = bq_read_u16(BQ_REG_STATE_OF_CHARGE, &raw);
+    if (ret) return ret;
+
+    *soc = raw;   // već u procentima (0–100)
+    return 0;
+}
