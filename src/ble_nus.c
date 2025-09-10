@@ -160,7 +160,7 @@ static void process_command(const uint8_t *data, uint16_t len)
         msg[i] = '\0';
     }
     /* SON – Start stimulation */
-    if (strcmp(msg, "SON") == 0) {
+    if (strcmp(msg, ">SON<") == 0) {
         if (!stimulation_running) {
             stimulation_running = true;
             start_pulse_sequence();
@@ -171,7 +171,7 @@ static void process_command(const uint8_t *data, uint16_t len)
         return;  
     }
 
-    if (strcmp(msg, "OFF") == 0) {
+    if (strcmp(msg, ">OFF<") == 0) {
         if (stimulation_running) {
             stimulation_running = false;
             stop_pulse_sequence();
@@ -182,13 +182,113 @@ static void process_command(const uint8_t *data, uint16_t len)
         return;  
     }
         /* RCE – pokreni čitanje kontakata (bez argumenata) */
-    if (strcmp(msg, "RCE") == 0) {
+    if (strcmp(msg, ">RCE<") == 0) {
         if (RCE == 0) {
             RCE = 1;                   // omogući režim čitanja za sledećih 8 impulsa
             send_response(">RCE;OK<\r\n");
         } else {
             send_response(">RCE;BUSY<\r\n");
         }
+        return;
+    }
+    if (strcmp(msg, "<RSC>") == 0) {
+        uint16_t soc = 0;
+        int ret = fuel_gauge_get_soc(&soc);   // wrapper funkcija u fuel_gauge.c
+        if (ret == 0) {
+            char resp[16];
+            snprintk(resp, sizeof(resp), ">RSC;%u<", soc);
+            send_response(resp);
+        } else {
+            send_response(">RSCERR<");
+        }
+        return;
+    }
+
+        /* RSTAT – vrati kompletno trenutno stanje (7 set + baterija + kontakti) */
+    if (strcmp(msg, ">RSS<") == 0) {
+        /* 1) SON/OFF */
+        if (stimulation_running) {
+            send_response(">SON<\r\n");
+        } else {
+            send_response(">OFF<\r\n");
+        }
+
+                /* 2) SA; v1 v2 ... v8 (decimal, kao u SA komandi) */
+        {
+            if (number_patter < patterns_count) {
+                char line[160];
+                char *p = line;
+                p += snprintk(p, sizeof(line) - (p - line), ">SA;");
+                for (int i = 0; i < PATTERN_LEN; i++) {
+                    uint16_t v = pulse_patterns[number_patter][i];
+                    p += snprintk(p, sizeof(line) - (p - line),
+                                  (i < PATTERN_LEN - 1) ? "0x%04X " : "0x%04X",
+                                  v);
+                }
+                p += snprintk(p, sizeof(line) - (p - line), "<\r\n");
+                send_response(line);
+            } else {
+                send_response(">SA;ERR<\r\n");
+            }
+        }
+
+
+        /* 3) SF;x */
+        {
+            char line[24];
+            snprintk(line, sizeof(line), ">SF;%u<\r\n", (unsigned)frequency);
+            send_response(line);
+        }
+
+        /* 4) PW;x */
+        {
+            char line[24];
+            snprintk(line, sizeof(line), ">PW;%u<\r\n", (unsigned)pulse_width);
+            send_response(line);
+        }
+
+        /* 5) SC;x  (koristimo aktivni pattern index / šemu) */
+        // {
+        //     char line[24];
+        //     snprintk(line, sizeof(line), ">SC;%u<\r\n", (unsigned)number_patter);
+        //     send_response(line);
+        // }
+
+        /* 6) ST;x  (trajanje stimulacije u sekundama) */
+        {
+            char line[24];
+            snprintk(line, sizeof(line), ">ST;%u<\r\n", (unsigned)stim_duration_s);
+            send_response(line);
+        }
+
+        /* 7) RSC;x  (State of Charge u %) */
+        {
+            uint16_t soc = 0;
+            int ret = fuel_gauge_get_soc(&soc);
+            if (ret == 0) {
+                char line[24];
+                snprintk(line, sizeof(line), ">RSC;%u<\r\n", (unsigned)soc);
+                send_response(line);
+            } else {
+                send_response(">RSCERR<\r\n");
+            }
+        }
+
+        /* 8) RCE;xx  (kontakt elektroda – poslednja poznata 8-bit maska) */
+        {
+            uint8_t mask = 0;
+            /* Ako imaš util iz SAADC podsistema: */
+            extern bool saadc_get_last_burst(uint8_t *out_mask);
+            if (saadc_get_last_burst(&mask)) {
+                char line[24];
+                snprintk(line, sizeof(line), ">RCE;%02X<\r\n", mask);
+                send_response(line);
+            } else {
+                /* Nema sveže maske – prijavi poslednju ili ERR */
+                send_response(">RCE;NA<\r\n");
+            }
+        }
+
         return;
     }
 
@@ -207,7 +307,7 @@ static void process_command(const uint8_t *data, uint16_t len)
      * Komanda SP – Set Pattern
      * Format: SP;0xAABB 0xCCDD ... (8 vrednosti)
      * ============================================================ */
-    if (strcmp(cmd, "SP") == 0) {//Treba umesto SP da se stavi SA
+    if (strcmp(cmd, "SA") == 0) {//Treba umesto SP da se stavi SA
         uint16_t tmp[PATTERN_LEN];
         int found = 0;
 
@@ -252,7 +352,7 @@ static void process_command(const uint8_t *data, uint16_t len)
      * Komanda SM – Set active pattern
      * Format: SM;x (decimal ili hex 0x..)
      * ============================================================ */
-    if (strcmp(cmd, "SM") == 0) { //Treba umesto SM da se stavi SP
+    if (strcmp(cmd, "SP") == 0) { //Treba umesto SM da se stavi SP
         long v = strtol(arg, NULL, 0);
         if (v < 0 || (size_t)v >= patterns_count) {
             send_response("ERR: invalid pattern index\n");

@@ -188,6 +188,8 @@ static int saadc_hw_setup(void)
 #else
     g_chan.channel_config.gain = NRF_SAADC_GAIN1_6;
 #endif
+    LOG_INF("SAADC setup: gain=%d, input_pin=%u", (int)g_chan.channel_config.gain, (unsigned)SAADC_INPUT_PIN);
+
     err = nrfx_saadc_channels_config(&g_chan, 1);
     if (err != NRFX_SUCCESS) { LOG_ERR("channels_config: 0x%08x", err); return -EIO; }
 
@@ -205,16 +207,20 @@ static int saadc_hw_setup(void)
     g_thresh_code_lo = mv_to_code(lo_mv);
     g_over_state     = false;
 
+    LOG_INF("Thresholds: T=%umV, Hyst=%umV -> HI_code=%u, LO_code=%u",
+            THRESHOLD_MV, THRESHOLD_HYST_MV, g_thresh_code_hi, g_thresh_code_lo);
+
     /* (D)PPI: STARTED → SAMPLE (nulta latencija) */
     err = nrfx_gppi_channel_alloc(&g_ch_started_to_sample);
     if (err != NRFX_SUCCESS) { LOG_ERR("gppi alloc: 0x%08x", err); return -EIO; }
     g_gppi_allocd = true;
 
-    nrfx_gppi_channel_endpoints_setup(
-        g_ch_started_to_sample,
-        nrf_saadc_event_address_get(NRF_SAADC, NRF_SAADC_EVENT_STARTED),
-        nrf_saadc_task_address_get(NRF_SAADC, NRF_SAADC_TASK_SAMPLE));
+    uint32_t ev_started = nrf_saadc_event_address_get(NRF_SAADC, NRF_SAADC_EVENT_STARTED);
+    uint32_t t_sample   = nrf_saadc_task_address_get(NRF_SAADC, NRF_SAADC_TASK_SAMPLE);
+    nrfx_gppi_channel_endpoints_setup(g_ch_started_to_sample, ev_started, t_sample);
     nrfx_gppi_channels_enable(BIT(g_ch_started_to_sample));
+    LOG_INF("GPPI ch=%u: STARTED(0x%08x) -> SAMPLE(0x%08x) enabled",
+            g_ch_started_to_sample, ev_started, t_sample);
 
     g_in_progress = false;
     g_has_last    = false;
@@ -226,6 +232,8 @@ static int saadc_hw_setup(void)
 /* ====== Siguran re-init (samo kada smo idle, van ISR-a) ====== */
 static int saadc_reinit_safely(void)
 {
+    LOG_WRN("SAADC reinit request");
+
     /* prekini eventualnu aktivnu konverziju */
     nrfx_saadc_abort();
     g_in_progress = false;
@@ -233,21 +241,24 @@ static int saadc_reinit_safely(void)
 
     /* pokušaj da obezbediš ekskluzivu kratko */
     if (k_sem_take(&g_saadc_idle_sem, K_MSEC(1)) != 0) {
+        LOG_WRN("reinit: sem busy");
         return -EBUSY;
     }
 
     if (g_gppi_allocd) {
         nrfx_gppi_channels_disable(BIT(g_ch_started_to_sample));
         nrfx_gppi_channel_free(g_ch_started_to_sample);
+        LOG_INF("GPPI ch freed: %u", g_ch_started_to_sample);
         g_gppi_allocd = false;
     }
 
     nrfx_saadc_uninit();
+    LOG_INF("SAADC uninit");
 
     nrfx_err_t err = nrfx_saadc_init(DT_IRQ(DT_NODELABEL(adc), priority));
     if (err != NRFX_SUCCESS) {
         k_sem_give(&g_saadc_idle_sem);
-        LOG_ERR("saadc re-init failed: 0x%08x", err);
+        LOG_ERR("saadc init (reinit) failed: 0x%08x", err);
         return -EIO;
     }
     int r = saadc_hw_setup();
@@ -255,6 +266,8 @@ static int saadc_reinit_safely(void)
 
     if (r == 0) {
         LOG_INF("SAADC reinit OK");
+    } else {
+        LOG_ERR("SAADC reinit error: %d", r);
     }
     return r;
 }
@@ -279,25 +292,29 @@ static void saadc_maint_work(struct k_work *work)
         }
 
         atomic_inc(&g_abort_streak);
-        LOG_WRN("SAADC watchdog: abortovao zaglavljenu konverziju");
+        LOG_WRN("SAADC watchdog: abortovao zaglavljenu konverziju (streak=%ld)",
+                (long)atomic_get(&g_abort_streak));
     }
 
     /* 2) Ako smo idle, pokušaj kalibraciju s vremena na vreme (svaki ciklus) */
     if (!g_in_progress && k_sem_count_get(&g_saadc_idle_sem) > 0) {
-
-            (void)saadc_reinit_safely();
-        
+        LOG_DBG("maint: idle -> try light reinit");
+        (void)saadc_reinit_safely();
     }
 
     /* 3) Ako pređe n aborta zaredom, uradi re-init */
     if (atomic_get(&g_abort_streak) >= SAADC_ABORT_STREAK_REINIT) {
+        LOG_WRN("maint: abort streak >= %d -> forced reinit", SAADC_ABORT_STREAK_REINIT);
         if (saadc_reinit_safely() == 0) {
             atomic_set(&g_abort_streak, 0);
+            LOG_INF("maint: streak reset");
         }
     }
 
     /* 4) resched */
     k_work_reschedule(&g_saadc_maint, K_MSEC(SAADC_MAINT_PERIOD_MS));
+    LOG_DBG("maint: rescheduled in %u ms (last_done_ms=%u, in_prog=%u)",
+            (unsigned)SAADC_MAINT_PERIOD_MS, (unsigned)g_last_done_ms, (unsigned)g_in_progress);
 }
 
 /* ====== API ====== */
@@ -307,6 +324,7 @@ int saadc_ppi_oneshot_init(void)
     /* P0.x kao izlaz (default low) */
     nrf_gpio_cfg_output(OUT_PIN);
     NRF_P0->OUTCLR = OUT_PIN_MASK;
+    LOG_INF("OUT pin init: P0.%u = LOW", OUT_PIN);
 
     /* IRQ CONNECT samo jednom */
     if (!g_irq_connected) {
@@ -314,10 +332,12 @@ int saadc_ppi_oneshot_init(void)
                     DT_IRQ(DT_NODELABEL(adc), priority),
                     nrfx_isr, nrfx_saadc_irq_handler, 0);
         g_irq_connected = true;
+        LOG_INF("SAADC IRQ connected (prio=%d)", DT_IRQ(DT_NODELABEL(adc), priority));
     }
 
     /* Semafor: dozvoli odmah jedan trigger */
     k_sem_init(&g_saadc_idle_sem, 1, 1);
+    LOG_DBG("sem init: count=%d", k_sem_count_get(&g_saadc_idle_sem));
 
     nrfx_err_t err = nrfx_saadc_init(DT_IRQ(DT_NODELABEL(adc), priority));
     if (err != NRFX_SUCCESS) { LOG_ERR("saadc_init: 0x%08x", err); return -EIO; }
@@ -328,6 +348,7 @@ int saadc_ppi_oneshot_init(void)
     /* Startuj periodično održavanje */
     k_work_init_delayable(&g_saadc_maint, saadc_maint_work);
     k_work_schedule(&g_saadc_maint, K_MSEC(SAADC_MAINT_PERIOD_MS));
+    LOG_INF("maint scheduled in %u ms", (unsigned)SAADC_MAINT_PERIOD_MS);
 
     LOG_INF("SAADC 1-shot OK: T=%umV (+/-%umV), codes HI=%u LO=%u, P0.%u out",
             THRESHOLD_MV, THRESHOLD_HYST_MV, g_thresh_code_hi, g_thresh_code_lo, OUT_PIN);
@@ -351,11 +372,14 @@ int saadc_trigger_once_ppi(void)
         }
 
         atomic_inc(&g_abort_streak);
-        LOG_WRN("SAADC watchdog (trigger): abortovao zaglavljenu konverziju");
+        LOG_WRN("SAADC watchdog (trigger): abortovao zaglavljenu konverziju (streak=%ld)",
+                (long)atomic_get(&g_abort_streak));
+
     }
 
     /* 2) Uzmi semafor sa kratkim tajmautom (smanjuje false-BUSY šum) */
     if (k_sem_take(&g_saadc_idle_sem, K_USEC(200)) != 0) {
+        LOG_WRN("trigger: BUSY (sem)");
         send_response("BUSY");
         saadc_reinit_safely();
         return -EBUSY;
@@ -371,7 +395,10 @@ int saadc_trigger_once_ppi(void)
             k_sem_give(&g_saadc_idle_sem);
         }
         LOG_ERR("buffer_set: 0x%08x", err);
+        saadc_reinit_safely();
         return (err == NRFX_ERROR_BUSY) ? -EBUSY : -EIO;
+        //reinit
+
     }
 
     err = nrfx_saadc_mode_trigger();
@@ -386,6 +413,7 @@ int saadc_trigger_once_ppi(void)
 
     /* 3) Armiraj watchdog */
     g_cycle_start_ms = k_uptime_get_32();
+    LOG_DBG("trigger: armed (t0=%u)", (unsigned)g_cycle_start_ms);
 
     return 0;
 }
@@ -393,7 +421,10 @@ int saadc_trigger_once_ppi(void)
 /* Poslednji kompletan 8-bitni rezultat; true ako postoji važeći rezultat */
 bool saadc_get_last_burst(uint8_t *mask_out)
 {
-    if (!g_burst_last_valid) return false;
+    if (!g_burst_last_valid) {
+        LOG_DBG("get_last_burst: no data");
+        return false;
+    }
 
     /* 8-bitni read je atomičan, ali zaključaj zbog flag-a */
     unsigned int key = irq_lock();
@@ -401,12 +432,14 @@ bool saadc_get_last_burst(uint8_t *mask_out)
     irq_unlock(key);
 
     if (mask_out) *mask_out = v;
+    LOG_INF("get_last_burst: 0x%02X", v);
     return true;
 }
 
 /* Napredak tekuće povorke (0..8) */
 uint8_t saadc_get_burst_progress(void)
 {
+    LOG_DBG("burst_progress: %u", g_burst_idx);
     return g_burst_idx;
 }
 
@@ -414,4 +447,5 @@ uint8_t saadc_get_burst_progress(void)
 void saadc_set_callback(saadc_cb_t cb)
 {
     g_user_cb = cb;
+    LOG_INF("callback set: %p", (void*)cb);
 }

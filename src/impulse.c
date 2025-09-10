@@ -48,7 +48,6 @@ static bool     silent_probe_active  = false;
 static uint8_t  silent_count         = 0;
 static uint8_t  silent_mask          = 0;
 
-
 /* Širina jedinice u tvom izrazu: STIMULATION_PULSE_WIDTH_US * pulse_width */
 #ifndef STIMULATION_PULSE_WIDTH_US
 #define STIMULATION_PULSE_WIDTH_US 1
@@ -60,21 +59,12 @@ static uint8_t rce_mask  = 0;       // 8-bit maska rezultata
 
 static uint8_t RCE_FIRST = 0;  
 
-
-
 /* Kontrola rada */
 static volatile bool s_impulse_inited  = false;
 static volatile bool s_impulse_running = false;
 
-/* === Timer za auto-OFF === */
-static void stim_timer_handler(struct k_timer *t)
-{
-    s_impulse_running = false;
-    stop_pulse_sequence();
-    stimulation_running = false;
-    send_response("OFFOK\r\n");
-}
-K_TIMER_DEFINE(stim_timer, stim_timer_handler, NULL);
+/* === Forward deklaracije === */
+static void stop_pulse_sequence_internal(bool from_timer);
 
 /* === Helperi === */
 static inline void set_anode(int level)   { gpio_pin_set_dt(&pulse_anode,   level); }
@@ -94,14 +84,17 @@ static void ensure_default_pattern(void)
         number_patter  = 0;
     }
 }
+
 static void my_adc_cb(int16_t s)
 {
     // LOG_INF("One-shot SAADC sample = %d", s);
 }
+
 static int pulse_pins_init(void)
 {
     saadc_ppi_oneshot_init();
     // saadc_set_callback(my_adc_cb);
+
     if (!device_is_ready(pulse_anode.port) || !device_is_ready(pulse_cathode.port)) {
         send_response("IMP: GPIO device not ready\r\n");
         return -ENODEV;
@@ -168,20 +161,12 @@ void report_last_burst(void)
         char msg[16];
         snprintk(msg, sizeof(msg), "RCE;%02X", mask);
         send_response(msg);
-
     } else {
         send_response("RCE;NA");   /* još nema kompletne povorke */
-
     }
 }
 
-/* === Namera: jedan "trokorak" pulsa: ANODE_ON -> CATHODE_ON -> PAUSE ===
- * Svaka faza traje width_us; precizno u µs, bez jitter-a (irq_lock + k_busy_wait).
- */
-
-/* === Namera: jedan "trokorak" pulsa: ANODE_ON -> CATHODE_ON -> PAUSE ===
- * Svaka faza traje width_us; precizno u µs, bez jitter-a (irq_lock + k_busy_wait).
- */
+/* === Jedan puls (3 faze) === */
 static inline void do_one_pulse_us(uint32_t width_us, uint8_t pair_idx)
 {
     /* DAC za taj par (po tvom kodu 0.85 skalar) */
@@ -190,11 +175,11 @@ static inline void do_one_pulse_us(uint32_t width_us, uint8_t pair_idx)
         dac_set_value((int)(uA * 0.85f));
     }
 
-    if(RCE==1){
+    if (RCE == 1) {
         report_last_burst();
-        RCE=0;
+        RCE = 0;
     }
-    if(new_frequency){
+    if (new_frequency) {
         new_frequency = 0;
         reset_burst_schedule();
     }
@@ -213,13 +198,10 @@ static inline void do_one_pulse_us(uint32_t width_us, uint8_t pair_idx)
     set_cathode(1);
     irq_unlock(key);
 
-
-    // Meri samo u "mernim" povorkama i samo na planiranom impulsu
-    if(frequency==1 || frequency==2 || frequency==3 || frequency==4){
-        saadc_trigger_once_ppi();  
-    }
-    else if (is_measure_burst() && (pulse_in_burst == measure_idx)) {
-        saadc_trigger_once_ppi();  // bez kašnjenja (PPi/DPPI)
+    if (frequency == 1 || frequency == 2 || frequency == 3 || frequency == 4) {
+        saadc_trigger_once_ppi();
+    } else if (is_measure_burst() && (pulse_in_burst == measure_idx)) {
+        saadc_trigger_once_ppi();  // bez kašnjenja (PPI/DPPI)
     }
 
     k_busy_wait(width_us);  /* katoda */
@@ -236,7 +218,25 @@ static inline void do_one_pulse_us(uint32_t width_us, uint8_t pair_idx)
     burst_advance();
 }
 
+/* === Work koji bezbedno gasi stimulaciju (poziva se iz timer callback-a) === */
+static void stop_work_handler(struct k_work *work)
+{
+    ARG_UNUSED(work);
+    stop_pulse_sequence_internal(true);  // from_timer = true
+}
+K_WORK_DEFINE(stim_stop_work, stop_work_handler);
 
+/* === Timer handler: samo pokreće work koji gasi stimulaciju === */
+static void stim_timer_handler(struct k_timer *t)
+{
+    ARG_UNUSED(t);
+    /* Zastavi glavnu petlju i prepusti gašenje work-u (bezbedno okruženje) */
+    s_impulse_running = false;
+    k_work_submit(&stim_stop_work);
+}
+
+/* One-shot tajmer: traje tačno stim_duration_s i onda gasi stimulaciju */
+K_TIMER_DEFINE(stim_timer, stim_timer_handler, NULL);
 
 /* === Thread koji pravi pulseve stabilno === */
 #define IMP_STACK  2048
@@ -252,7 +252,6 @@ static void impulse_thread(void *a, void *b, void *c)
         return;
     }
 
-
     ensure_default_pattern();
 
     /* Pattern selekcija */
@@ -267,89 +266,113 @@ static void impulse_thread(void *a, void *b, void *c)
 
     number_of_pulses = 0;
 
-    /* Rasporedi auto-OFF */
-    k_timer_start(&stim_timer, K_SECONDS(stim_duration_s), K_NO_WAIT);
-
     send_response("IMP: ready\r\n");
 
-             uint32_t T_intra_us          = hz_to_us(frequency_of_impulses);                              // period između pulseva
-                               // period između grupa (8)
+    while (s_impulse_running) {
+        const uint32_t phase_us      = (uint32_t)STIMULATION_PULSE_WIDTH_US * (uint32_t)pulse_width; // 1 faza
+        const uint32_t one_pulse_us  = 3U * phase_us;                                                // ANODE + CATHODE + PAUSE
+        uint32_t T_intra_us          = hz_to_us(frequency_of_impulses);                              // period između pulseva
+        uint32_t T_block_us          = hz_to_us(frequency);                                          // period između grupa (8)
 
+        /* pattern & prvi MUX za grupu */
+        size_t sel2 = number_patter >= patterns_count ? 0 : number_patter;
+        const uint16_t *cur2 = pulse_patterns[sel2];
 
-   while (s_impulse_running) {
-    const uint32_t phase_us      = (uint32_t)STIMULATION_PULSE_WIDTH_US * (uint32_t)pulse_width; // 1 faza
-    const uint32_t one_pulse_us  = 3U * phase_us;                                                // ANODE + CATHODE + PAUSE
-    uint32_t T_block_us          = hz_to_us(frequency);  
-    /* pattern & prvi MUX za grupu */
-    size_t sel = number_patter >= patterns_count ? 0 : number_patter;
-    const uint16_t *cur = pulse_patterns[sel];
+        /* sabira koliko je trajalo u okviru ove grupe */
+        uint64_t group_elapsed_us = 0;
 
-    /* sabira koliko je trajalo u okviru ove grupe */
-    uint64_t group_elapsed_us = 0;
+        for (uint8_t i = 0; i < PATTERN_LEN && s_impulse_running; i++) {
+            /* MUX za tekući par */
+            uint16_t pat = cur2[i];
+            tx_buffer_1[0] = (uint8_t)(pat >> 8);
+            tx_buffer_1[1] = (uint8_t)(pat & 0xFF);
+            (void)mux_write(&stim_mux_config, tx_buffer_1, sizeof(tx_buffer_1));
 
-    for (uint8_t i = 0; i < PATTERN_LEN && s_impulse_running; i++) {
-        /* MUX za tekući par */
-        uint16_t pat = cur[i];
-        tx_buffer_1[0] = (uint8_t)(pat >> 8);
-        tx_buffer_1[1] = (uint8_t)(pat & 0xFF);
-        (void)mux_write(&stim_mux_config, tx_buffer_1, sizeof(tx_buffer_1));
+            /* Jedan puls (3 faze, precizno u µs, bez IRQ-a) */
+            do_one_pulse_us(phase_us, i);
+            number_of_pulses++;
 
-        /* Jedan puls (3 faze, precizno u µs, bez IRQ-a) */
-        do_one_pulse_us(phase_us, i);
-        number_of_pulses++;
+            group_elapsed_us += one_pulse_us;
 
-        group_elapsed_us += one_pulse_us;
+            /* Odmor između pojedinačnih pulseva (osim posle 8-og) */
+            if (i < (PATTERN_LEN - 1)) {
+                uint32_t rest_us = (T_intra_us > one_pulse_us) ? (T_intra_us - one_pulse_us) : 0;
+                group_elapsed_us += rest_us;
 
-        /* Odmor između pojedinačnih pulseva (osim posle 8-og) */
-        if (i < (PATTERN_LEN - 1)) {
-            uint32_t rest_us = (T_intra_us > one_pulse_us) ? (T_intra_us - one_pulse_us) : 0;
-            group_elapsed_us += rest_us;
-
-            if (rest_us >= 2000) {
-                k_msleep(rest_us / 1000);
-                uint32_t rem = rest_us % 1000;
-                if (rem) k_busy_wait(rem);
-            } else {
-                k_busy_wait(rest_us);
+                if (rest_us >= 2000) {
+                    k_msleep(rest_us / 1000);
+                    uint32_t rem = rest_us % 1000;
+                    if (rem) k_busy_wait(rem);
+                } else {
+                    k_busy_wait(rest_us);
+                }
             }
         }
+
+        /* Odmor između grupa (do perioda 'frequency') */
+        uint32_t inter_rest_us = (T_block_us > group_elapsed_us) ? (uint32_t)(T_block_us - group_elapsed_us) : 0;
+        if (inter_rest_us >= 2000) {
+            k_msleep(inter_rest_us / 1000);
+            uint32_t rem = inter_rest_us % 1000;
+            if (rem) k_busy_wait(rem);
+        } else {
+            k_busy_wait(inter_rest_us);
+        }
+
+        /* spremi se za sledeću grupu; brojanje unutar grupe resetuješ po želji */
+        number_of_pulses = 0;
     }
-
-    /* Odmor između grupa (do perioda 'frequency') */
-    uint32_t inter_rest_us = (T_block_us > group_elapsed_us) ? (uint32_t)(T_block_us - group_elapsed_us) : 0;
-    if (inter_rest_us >= 2000) {
-        k_msleep(inter_rest_us / 1000);
-        uint32_t rem = inter_rest_us % 1000;
-        if (rem) k_busy_wait(rem);
-    } else {
-        k_busy_wait(inter_rest_us);
-    }
-
-    /* spremi se za sledeću grupu; brojanje unutar grupe resetuješ po želji */
-    number_of_pulses = 0;
-}
-
 
     /* Fail-safe: pinovi u 0 */
     set_anode(0);
     set_cathode(0);
 }
 
-/* === START/STOP API (idempotentni) === */
+/* === START/STOP – idempotentno === */
+static void stop_pulse_sequence_internal(bool from_timer)
+{
+    /* Zaustavi glavnu petlju */
+    s_impulse_running = false;
+
+    /* Ugasi tajmer (ako nije već istekao) */
+    k_timer_stop(&stim_timer);
+
+    /* Spusti pinove i isključi DC/DC */
+    set_anode(0);
+    set_cathode(0);
+
+    if (device_is_ready(dc_dc_en.port)) {
+        gpio_pin_configure_dt(&dc_dc_en, GPIO_OUTPUT_INACTIVE);
+        gpio_pin_set_dt(&dc_dc_en, 0);
+    }
+    stimulation_running = false;
+
+    if (from_timer) {
+        send_response("OFFOK\r\n");
+    } else {
+        send_response("STOPPED\r\n");
+    }
+}
+
 void start_pulse_sequence(void)
 {
-    if (s_impulse_running) return;
+    if (s_impulse_running) {
+        return;
+    }
 
     s_impulse_inited  = true;
     s_impulse_running = true;
 
-    /* Ako imaš DC-DC enable pin, uključi ga pre starta (po potrebi) */
+    /* Uključi DC-DC pre starta (po potrebi) */
     if (device_is_ready(dc_dc_en.port)) {
         gpio_pin_configure_dt(&dc_dc_en, GPIO_OUTPUT_ACTIVE);
         gpio_pin_set_dt(&dc_dc_en, 1);
     }
 
-    /* Pokreni nit */
+    /* Start one-shot timera koji trajanje sesije vezuje za stim_duration_s */
+    k_timer_start(&stim_timer, K_SECONDS(stim_duration_s), K_NO_WAIT);
+
+    /* Pokreni nit sa impulsima */
     k_thread_create(&imp_thread_data, imp_stack, IMP_STACK,
                     impulse_thread, NULL, NULL, NULL,
                     IMP_PRIO, 0, K_NO_WAIT);
@@ -362,8 +385,6 @@ void stop_pulse_sequence(void)
         send_response("IMPULSE NOT INITED\r\n");
         return;
     }
-    s_impulse_running = false;
-    k_timer_stop(&stim_timer);
-
-
+    /* Ako ručno zaustavljamo, sprovedi isto što i posle timera */
+    stop_pulse_sequence_internal(false);
 }
