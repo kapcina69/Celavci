@@ -191,7 +191,7 @@ static void process_command(const uint8_t *data, uint16_t len)
         }
         return;
     }
-    if (strcmp(msg, "<RSC>") == 0) {
+    if (strcmp(msg, ">RSC<") == 0) {
         uint16_t soc = 0;
         int ret = fuel_gauge_get_soc(&soc);   // wrapper funkcija u fuel_gauge.c
         if (ret == 0) {
@@ -293,21 +293,51 @@ static void process_command(const uint8_t *data, uint16_t len)
     }
 
 
-    /* --- Provera osnovnog formata "XX;..." --- */
-    if (strlen(msg) < 3 || msg[2] != ';') {
-        send_response(ERR_MSG);
+    /* === Parsiranje komande u formatu >XX;ARGUMENTI< === */
+    char cmd[4] = {0};          /* podržava 2–3 slova, npr. "SA", "RSH" */
+    const char *arg = NULL;     /* pokazivač na argumente bez završnog '<' */
+    char arg_local[128] = {0};  /* lokalni bafer za argumente (od ';' do '<') */
+
+    const char *gt = strchr((const char *)msg, '>');
+    const char *lt = gt ? strchr(gt, '<') : NULL;     /* kraj poruke */
+    const char *sc = gt ? strchr(gt, ';') : NULL;     /* razdvajanje cmd/arg */
+
+    if (!gt) {
+        send_response(">ERR;NO_START<\r\n");
+        return;
+    }
+    if (!lt) {
+        send_response(">ERR;NO_END<\r\n");
         return;
     }
 
-    /* Razdvoji komandu i argumente */
-    char cmd[3] = { msg[0], msg[1], '\0' };
-    const char *arg = msg + 3;
+    /* Komanda je između '>' i prvog ';' ili '<' (šta prvo naiđe) */
+    const char *cmd_end = (sc && sc < lt) ? sc : lt;
+    size_t clen = (size_t)(cmd_end - (gt + 1));
+    if (clen == 0 || clen > 3) {
+        send_response(">ERR;BAD_CMD<\r\n");
+        return;
+    }
+    memcpy(cmd, gt + 1, clen);
+    cmd[clen] = '\0';
+
+    /* Argumenti su između ';' i '<' (ako ima ';'), inače nema argumenata */
+    if (sc && sc < lt) {
+        size_t alen = (size_t)(lt - (sc + 1));
+        if (alen >= sizeof(arg_local)) alen = sizeof(arg_local) - 1;
+        memcpy(arg_local, sc + 1, alen);
+        arg_local[alen] = '\0';
+    }
+    arg = arg_local;
+
+    /* --- Dalje tvoj postojeći kod ostaje isti: koristi 'cmd' i 'arg' --- */
+
 
     /* ============================================================
-     * Komanda SP – Set Pattern
-     * Format: SP;0xAABB 0xCCDD ... (8 vrednosti)
-     * ============================================================ */
-    if (strcmp(cmd, "SA") == 0) {//Treba umesto SP da se stavi SA
+    * Komanda SP – Set Pattern
+    * Format: SP;0xAABB 0xCCDD ... (8 vrednosti)
+    * ============================================================ */
+    if (strcmp(cmd, "SA") == 0) { // (tvoja trenutna logika ostaje)
         uint16_t tmp[PATTERN_LEN];
         int found = 0;
 
@@ -317,8 +347,8 @@ static void process_command(const uint8_t *data, uint16_t len)
         buf[n] = '\0';
 
         for (char *p = strtok(buf, " \t");
-             p != NULL && found < PATTERN_LEN;
-             p = strtok(NULL, " \t")) {
+            p != NULL && found < PATTERN_LEN;
+            p = strtok(NULL, " \t")) {
             uint16_t v;
             if (!parse_hex16(p, &v)) {
                 send_response("ERR: bad hex in SP\n");
@@ -349,10 +379,10 @@ static void process_command(const uint8_t *data, uint16_t len)
     }
 
     /* ============================================================
-     * Komanda SM – Set active pattern
-     * Format: SM;x (decimal ili hex 0x..)
-     * ============================================================ */
-    if (strcmp(cmd, "SP") == 0) { //Treba umesto SM da se stavi SP
+    * Komanda SM – Set active pattern
+    * Format: SM;x (decimal ili hex 0x..)
+    * ============================================================ */
+    if (strcmp(cmd, "SP") == 0) { // (tvoja trenutna logika ostaje)
         long v = strtol(arg, NULL, 0);
         if (v < 0 || (size_t)v >= patterns_count) {
             send_response("ERR: invalid pattern index\n");
@@ -367,19 +397,16 @@ static void process_command(const uint8_t *data, uint16_t len)
     }
 
     /* ============================================================
-     * Komanda XC – Set current amplitude per each channel
-     * Format: XC;x1 x2 x3 x4 x5 x6 x7 x8  (decimal 5–200)
-     * ============================================================ */
-    /* === XC; x1 x2 x3 x4 x5 x6 x7 x8  (5..200, raw) === */
+    * Komanda XC – Set current amplitude per each channel
+    * Format: XC;x1 x2 x3 x4 x5 x6 x7 x8  (decimal 5–200)
+    * ============================================================ */
     else if (strcmp(cmd, "XC") == 0) {
         char buf[128];
 
-        /* Kopiraj ARG (deo posle ';') i normalizuj separatore */
         size_t n = strnlen(arg, sizeof(buf) - 1);
         memcpy(buf, arg, n);
         buf[n] = '\0';
 
-        /* Opciono: zameni zarez tab-om/razmakom ako ikad pošalješ 'XC;50,60,...' */
         for (char *s = buf; *s; ++s) {
             if (*s == ',') *s = ' ';
         }
@@ -395,46 +422,31 @@ static void process_command(const uint8_t *data, uint16_t len)
             char *endp = NULL;
             long v = strtol(tok, &endp, 10);
 
-            /* Validan samo ako je ceo token broj (bez slova) i u opsegu */
             if (endp == tok || *endp != '\0' || v < 5 || v > 200) {
                 send_response(">SC;ERR<\r\n");
                 return;
             }
+            tmp_vals[count++] = (uint16_t)v;
+        }
 
-        tmp_vals[count++] = (uint16_t)v;   // RAW 5..200, bez skaliranja
-    }
+        if (count != 8) {
+            send_response(">SC;ERR<\r\n");
+            return;
+        }
 
-    if (count != 8) {
-        send_response(">SC;ERR<\r\n");
+        for (int i = 0; i < 8; ++i) {
+            pair_amplitude_uA[i] = tmp_vals[i];
+        }
+
+        send_response(">SC;OK<\r\n");
         return;
     }
 
-    for (int i = 0; i < 8; ++i) {
-        pair_amplitude_uA[i] = tmp_vals[i];
-    }
-
-    send_response(">SC;OK<\r\n");
-    return;
-}
-
 
     /* ============================================================
-     * Ostale kratke komande oblika "XX;DECIMAL"
-     * ============================================================ */
+    * Ostale kratke komande oblika "XX;DECIMAL"
+    * ============================================================ */
     int value = (int)strtol(arg, NULL, 10);
-
-    
-
-    // /* SA – Set amplitude */
-    // if (strcmp(cmd, "SA") == 0) {
-    //     if (value >= 1 && value <= 30) {
-    //         amplitude = (uint8_t)value;
-    //         send_response(OK_MSG);
-    //         dac_set_value(amplitude * 8);
-    //     } else {
-    //         send_response(ERR_MSG);
-    //     }
-    // }
 
     /* SF – Set frequency */
     if (strcmp(cmd, "SF") == 0) {
@@ -458,20 +470,19 @@ static void process_command(const uint8_t *data, uint16_t len)
     }
 
     else if (strcmp(cmd, "ST") == 0) {
-    long v = strtol(arg, NULL, 10);
-    if (v >= 1 && v <= 36000) {
-        stim_duration_s = (uint32_t)v;
-        send_response(">ST;OK<\r\n");
-    } else {
-        send_response(">ST;ERR<\r\n");
+        long v = strtol(arg, NULL, 10);
+        if (v >= 1 && v <= 36000) {
+            stim_duration_s = (uint32_t)v;
+            send_response(">ST;OK<\r\n");
+        } else {
+            send_response(">ST;ERR<\r\n");
+        }
+        return;
     }
-    return;
-    }
-
-
 
     /* Nepoznata komanda */
     else {
         send_response(ERR_MSG);
     }
+
 }
