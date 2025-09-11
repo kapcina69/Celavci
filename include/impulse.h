@@ -67,7 +67,7 @@
  * Efektivna širina faze = `STIMULATION_PULSE_WIDTH_US * pulse_width`.
  * Vrednost `pulse_width` podešava se u BLE komandama (vidi `SW`).
  */
-#define STIMULATION_PULSE_WIDTH_US 10
+#define STIMULATION_PULSE_WIDTH_US 10 // Treba 1 za aplikaciju
 
 extern volatile uint16_t pair_amplitude_uA[8];
 extern volatile uint32_t stim_duration_s;

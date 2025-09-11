@@ -15,6 +15,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/i2c.h>
+#include <zephyr/logging/log.h>
 #include "impulse.h"
 #include "ble_nus.h"
 #include "dac.h"
@@ -23,6 +24,7 @@
 #include "fuel_gauge.h"
 #include "nrfx_adc.h"
 
+LOG_MODULE_REGISTER(main, LOG_LEVEL_DBG);
 
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
@@ -43,7 +45,6 @@ struct mux_config stim_mux_config = {
     };
 
 static const struct gpio_dt_spec led0 = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
-static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 const struct gpio_dt_spec kill= GPIO_DT_SPEC_GET(DT_ALIAS(kill), gpios); 
 const struct gpio_dt_spec pb_mcu= GPIO_DT_SPEC_GET(DT_ALIAS(pb_mcu), gpios);
 const struct gpio_dt_spec buzz= GPIO_DT_SPEC_GET(DT_ALIAS(buzz), gpios);
@@ -51,33 +52,7 @@ const struct gpio_dt_spec buzz= GPIO_DT_SPEC_GET(DT_ALIAS(buzz), gpios);
 
 
 
-// --- Deklaracije funkcija ---
-void connected(struct bt_conn *conn, uint8_t err);
-void disconnected(struct bt_conn *conn, uint8_t reason);
 
-// Bluetooth callback structure (implementation in ble_nus.c)
-static struct bt_conn_cb conn_callbacks = {
-    .connected = connected,
-    .disconnected = disconnected,
-};
-
-// --- BT events ---
-void connected(struct bt_conn *conn, uint8_t err)
-{
-    if (err) {
-        printk("BLE connection failed (err %u)\n", err);
-    } else {
-        printk("BLE connected\n");
-        gpio_pin_set_dt(&led1, 1);  // Turn on LED0 when connected
-        
-    }
-}
-
-void disconnected(struct bt_conn *conn, uint8_t reason)
-{
-    printk("BLE disconnected (reason %u)\n", reason);
-    gpio_pin_set_dt(&led1, 0);  // Turn off LED0 when disconnected
-}
 
 
 
@@ -123,6 +98,34 @@ static int init_gpios(void)
     return 0;
 }
 
+#include <hal/nrf_power.h>
+
+static void log_reset_reason(void)
+{
+    uint32_t reas = nrf_power_resetreas_get(NRF_POWER);
+
+    if (reas & POWER_RESETREAS_RESETPIN_Msk) {
+        LOG_INF("Reset: pin reset");
+    }
+    if (reas & POWER_RESETREAS_DOG_Msk) {
+        LOG_INF("Reset: watchdog");
+    }
+    if (reas & POWER_RESETREAS_SREQ_Msk) {
+        LOG_INF("Reset: soft reset");
+    }
+    if (reas & POWER_RESETREAS_LOCKUP_Msk) {
+        LOG_INF("Reset: CPU lockup");
+    }
+    if (reas & POWER_RESETREAS_OFF_Msk) {
+        LOG_INF("Reset: wakeup from OFF");
+    }
+    if (reas & POWER_RESETREAS_LPCOMP_Msk) {
+        LOG_INF("Reset: LPCOMP event");
+    }
+
+    /* Očisti zastavice da ne bi ostale za sledeći put */
+    nrf_power_resetreas_clear(NRF_POWER, reas);
+}
 
 
 
@@ -133,6 +136,7 @@ void main(void)
     int err;
     gpio_pin_set_dt(&kill, 0); // Set KILL pin low to enable the device
     gpio_pin_set_dt(&pb_mcu, 0); // Set PB_MCU pin high (not pressed)
+    log_reset_reason();
 
     /* === LED initialization === */
     if (!device_is_ready(led0.port)) {
@@ -140,13 +144,9 @@ void main(void)
         return;
     }
 
-    if (!device_is_ready(led1.port)) {
-        printk("LED1 device not ready\n");
-        return;
-    }
+    
 
     if (gpio_pin_configure_dt(&led0, GPIO_OUTPUT_INACTIVE) < 0 ||
-        gpio_pin_configure_dt(&led1, GPIO_OUTPUT_INACTIVE) < 0 ||
         gpio_pin_configure_dt(&kill, GPIO_OUTPUT_INACTIVE) < 0) { //
         printk("Failed to configure LEDs\n");
         return;
@@ -171,7 +171,6 @@ void main(void)
         return;
     }
 
-    bt_conn_cb_register(&conn_callbacks);
 
     /* === DAC and timer initialization === */
     dac_init();
@@ -194,8 +193,8 @@ void main(void)
     /* === Main loop === */
     while (1) {
 
-        bq27220_read_basic();  
-        k_sleep(K_SECONDS(3));
+
+        k_sleep(K_FOREVER);
 
     
     }
