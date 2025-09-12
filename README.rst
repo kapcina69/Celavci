@@ -1,26 +1,22 @@
-.. _peripheral_hr:
+# Celavci
 
-Bluetooth: Peripheral HR
-########################
+Firmware projekat za **nRF52840** bazirani modul, razvijen u okviru **Zephyr RTOS-a**.
 
-Overview
-********
+## Funkcionalnosti
+- **BLE komunikacija** preko Nordic UART Service (NUS)
+- **ADC očitavanja** (npr. merenje napona i struje)
+- **DAC kontrola** (MCP4716, I2C magistrala)
+- **Praćenje baterije** (TI BQ27220 fuel gauge)
+- **Multiplexer kontrola** (HV2607, SPI magistrala)
+- **GPIO kontrola** (katoda, anoda, DC-DC uključivanje)
 
-Similar to the :ref:`Peripheral <ble_peripheral>` sample, except that this
-application specifically exposes the HR (Heart Rate) GATT Service. Once a device
-connects it will generate dummy heart-rate values.
+## Struktura projekta
+- `CMakeLists.txt` – build konfiguracija
+- `mymodule.dts` – definicija hardverskih resursa (LED, GPIO, I2C, SPI, ADC, PWM)
+- `src/` – C fajlovi sa implementacijom
+- `include/` – zaglavlja sa interfejsima
 
-
-Requirements
-************
-
-* BlueZ running on the host, or
-* A board with BLE support
-
-Building and Running
-********************
-
-This sample can be found under :zephyr_file:`samples/bluetooth/peripheral_hr` in the
-Zephyr tree.
-
-See :ref:`bluetooth samples section <bluetooth-samples>` for details.
+## Build i flešovanje
+```bash
+west build -b nrf52840dk_nrf52840 .
+west flash
