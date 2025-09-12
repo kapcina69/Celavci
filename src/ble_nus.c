@@ -747,7 +747,8 @@ static void send_kv_raw2(const char hdr2[2], const uint8_t *payload, size_t plen
 
 
 // process command za aplikaciju
-
+void freq_control_start(void);
+void freq_control_stop(void);
 
 static void process_command(const uint8_t *data, uint16_t len)
 {
@@ -779,6 +780,7 @@ static void process_command(const uint8_t *data, uint16_t len)
         if (strcmp(cmd, "SON") == 0) {
             if (!stimulation_running) {
                 stimulation_running = true;
+                freq_control_start();
                 start_pulse_sequence();
                 printk("[CMD] SON -> start OK\n");
                 send_response("SONOK\r\n");
@@ -791,6 +793,7 @@ static void process_command(const uint8_t *data, uint16_t len)
         if (strcmp(cmd, "OFF") == 0) {
             if (stimulation_running) {
                 stimulation_running = false;
+                freq_control_stop();
                 stop_pulse_sequence();
                 printk("[CMD] OFF -> stop OK\n");
                 send_response("OFFOK\r\n");
@@ -1096,54 +1099,56 @@ static void process_command(const uint8_t *data, uint16_t len)
 
 
 
-/* === Frequency sweep thread ============================================
- * Parametri (puni ih SF komanda):
- *   freq_start  : 1..100  (Hz)
- *   freq_end    : 1..100  (Hz)
- *   freq_dur    : trajanje svake frekvencije u SEKUNDAMA;
- *                 0 => constant mode (nema menjanja)
- *   freq_sweep  : false => constant mode, true => changing (range)
- *
- * Napomena:
- * - Ako freq_sweep == false ili freq_dur == 0, ovaj thread samo obezbedi
- *   da je frequency = freq_start, i onda miruje.
- * - Ako freq_sweep == true i freq_dur > 0:
- *     - bira smer (+1 ili -1) na osnovu start<=end
- *     - menja frequency svakih freq_dur sekundi unutar [start..end]
- *     - po dolasku do kraja opsega, vraća se na početak (wrap)
- */
+
+
+
+
+
+
+
 
 #include <zephyr/kernel.h>
-
-#ifndef FREQ_THREAD_STACK_SIZE
-#define FREQ_THREAD_STACK_SIZE 1024
-#endif
-
-#ifndef FREQ_THREAD_PRIO
-#define FREQ_THREAD_PRIO 5
-#endif
+#include <zephyr/logging/log.h>
+LOG_MODULE_REGISTER(freq_sweep, LOG_LEVEL_INF);
 
 
 
+/* Trenutno stanje */
+static uint8_t cur_freq = 0;
+static int dir = +1;  /* smer promena: +1 ili -1 */
 
-
+/* --- Helper: postavi frekvenciju --- */
 static void set_frequency_safe(uint8_t f_hz)
 {
     frequency     = f_hz;
     new_frequency = 1;
-
-    // printk("[FREQ] set %u Hz\n", f_hz);
+    LOG_INF("[FREQ] set %u Hz", f_hz);
 }
 
-/* Core petlja za sweep */
-static void freq_sweep_loop(void)
+/* --- Work koji menja frekvenciju --- */
+static void freq_work_handler(struct k_work *work);
+K_WORK_DEFINE(freq_work, freq_work_handler);
+
+/* --- Tajmer koji trigeruje work --- */
+static void freq_timer_handler(struct k_timer *timer)
 {
-    /* Lokalna kopija parametara da izbegnemo trkanje tokom jedne iteracije */
+    k_work_submit(&freq_work);
+}
+K_TIMER_DEFINE(freq_timer, freq_timer_handler, NULL);
+
+/* --- Work logika (menjanje frekvencije) --- */
+static void freq_work_handler(struct k_work *work)
+{
+    if (!stimulation_running) {
+        /* Ako stimulacija nije ON, ne radi ništa */
+        return;
+    }
+
     uint8_t start = freq_start;
     uint8_t end   = freq_end;
     uint8_t dur_s = freq_dur;
 
-    /* Validacija i normalizacija */
+    /* Normalizacija */
     if (start < 1) start = 1;
     if (start > 100) start = 100;
     if (end   < 1) end   = 1;
@@ -1152,98 +1157,47 @@ static void freq_sweep_loop(void)
     if (!freq_sweep || dur_s == 0) {
         /* CONSTANT MODE */
         set_frequency_safe(start);
-        /* Nema menjanja; nežno spavaj pa proveravaj parametre povremeno */
-        k_msleep(500);
+        /* Ne menjamo ništa dalje */
         return;
     }
 
-    /* CHANGING/RANGE MODE */
-    /* Definiši smer i trenutnu */
-    int dir = (start <= end) ? +1 : -1;
+    /* Ako prvi put ulazimo, inicijalizuj */
+    if (cur_freq == 0) {
+        cur_freq = start;
+        dir = (start <= end) ? +1 : -1;
+    }
 
-    /* Ako želiš dozvoljen i opadajući “down-sweep”, samo menjaj dir=-1 i opseg [end..start] */
-    uint8_t cur = start;
+    /* Postavi trenutnu vrednost */
+    set_frequency_safe(cur_freq);
 
-    /* Uđi u ciklus; svaki “step” traje dur_s sekundi */
-    set_frequency_safe(cur);
-
-    /* Napomena: Thread će proveravati na svako trajanje da li su se parametri promenili.
-       Ako su promenjeni SF komandom, sledeća iteracija će ih pokupiti. */
-    k_msleep((uint32_t)dur_s * 1000U);
-
-    /* Izračunavanje sledeće vrednosti */
+    /* Izračunaj sledeću */
     if (dir > 0) {
-        if (cur < end) {
-            cur += 1;
-        } else {
-            cur = start; /* wrap na start */
-        }
-    } else { /* dir < 0 */
-        if (cur > end) {
-            cur -= 1;
-        } else {
-            cur = start; /* wrap na start (početak “down” sweepa) */
-        }
+        if (cur_freq < end) cur_freq++;
+        else cur_freq = start;  /* wrap */
+    } else {
+        if (cur_freq > end) cur_freq--;
+        else cur_freq = start;  /* wrap */
     }
 
-    set_frequency_safe(cur);
-    /* Ostatak se radi spavanjem u nit-funkciji */
+    /* Restart tajmera za sledeći step */
+    k_timer_start(&freq_timer, K_SECONDS(dur_s), K_NO_WAIT);
 }
 
-/* Nit koja upravlja promenom frekvencije */
-static void freq_thread(void *a, void *b, void *c)
+/* --- API koji pokreće sweep ili constant --- */
+void freq_control_start(void)
 {
-
-    printk("[FREQ] thread started\n");
-
-    while (1) {
-        /* Ako želiš da sweep radi samo kad je stimulacija ON: */
-        if (!stimulation_running) {
-            /* mirno spavaj i čekaj SON */
-            k_msleep(200);
-            continue;
-        }
-
-        /* Na svakoj iteraciji primeni logiku iznad; sweep_loop odradi jedan “korak” i spava */
-        if (!freq_sweep || freq_dur == 0) {
-            /* Constant: samo osveži vrednost i miruj */
-            set_frequency_safe(freq_start);
-            k_msleep(500);
-        } else {
-            /* Changing: jedan “step” + sleep na trajanje */
-            /* Ponovi dok god su uslovi aktivni (stimulation_running i sweep) */
-            uint8_t start = freq_start, end = freq_end, dur_s = freq_dur;
-            int dir = (start <= end) ? +1 : -1;
-            uint8_t cur = start;
-
-            while (stimulation_running && freq_sweep && freq_dur > 0) {
-                /* Ako su parametri promenjeni “u letu”, izađi iz unutrašnje petlje da ih re-load-uješ */
-                if (start != freq_start || end != freq_end || dur_s != freq_dur) {
-                    printk("[FREQ] params changed on the fly: reload\n");
-                    break;
-                }
-
-                set_frequency_safe(cur);
-
-                /* Spavaj trajanje */
-                k_msleep((uint32_t)dur_s * 1000U);
-
-                /* Sledeći korak */
-                if (dir > 0) {
-                    if (cur < end) cur += 1;
-                    else           cur = start; /* wrap */
-                } else {
-                    if (cur > end) cur -= 1;
-                    else           cur = start; /* wrap */
-                }
-            }
-        }
+    cur_freq = 0;  /* reset */
+    if (!freq_sweep || freq_dur == 0) {
+        /* Constant: odmah setuj frekvenciju */
+        set_frequency_safe(freq_start);
+    } else {
+        /* Sweep: pokreni tajmer */
+        k_timer_start(&freq_timer, K_NO_WAIT, K_NO_WAIT);
     }
 }
 
-/* Kreiraj nit (auto-start) */
-K_THREAD_DEFINE(freq_thread_id,
-                FREQ_THREAD_STACK_SIZE,
-                freq_thread,
-                NULL, NULL, NULL,
-                FREQ_THREAD_PRIO, 0, 0);
+void freq_control_stop(void)
+{
+    k_timer_stop(&freq_timer);
+    cur_freq = 0;
+}
