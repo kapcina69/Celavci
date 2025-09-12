@@ -20,7 +20,6 @@
 #include "ble_nus.h"
 #include "dac.h"
 #include "mux.h"
-#include "rsens.h"
 #include "fuel_gauge.h"
 #include "nrfx_adc.h"
 

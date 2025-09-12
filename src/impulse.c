@@ -4,7 +4,6 @@
 #include "ble_nus.h"
 #include "mux.h"
 #include "dac.h"
-#include "rsens.h"
 #include "nrfx_adc.h"
 
 #include <zephyr/kernel.h>
