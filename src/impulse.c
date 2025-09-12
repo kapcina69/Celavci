@@ -28,7 +28,7 @@ const struct gpio_dt_spec dc_dc_en      = GPIO_DT_SPEC_GET(DC_DC_EN_NODE, gpios)
 
 /* === Globalno stanje (preuzeto iz tvog koda) === */
 uint8_t  number_of_pulses      = 0;
-uint32_t frequency_of_impulses = 4000;   // Hz
+uint32_t frequency_of_impulses = 5000;   // Hz
 volatile uint32_t stim_duration_s = 1800;  // 30 min
 static uint8_t tx_buffer_1[2];
 
@@ -212,7 +212,7 @@ static inline void do_one_pulse_us(uint32_t width_us, uint8_t pair_idx)
     set_anode(0);
     irq_unlock(key);
 
-    k_busy_wait(width_us);  /* pauza */
+    // k_busy_wait(width_us);  /* pauza */
 
     /* pomeri brojače */
     burst_advance();
@@ -270,7 +270,7 @@ static void impulse_thread(void *a, void *b, void *c)
 
     while (s_impulse_running) {
         const uint32_t phase_us      = (uint32_t)STIMULATION_PULSE_WIDTH_US * (uint32_t)pulse_width; // 1 faza
-        const uint32_t one_pulse_us  = 3U * phase_us;                                                // ANODE + CATHODE + PAUSE
+        const uint32_t one_pulse_us  = 2U * phase_us;                                                // ANODE + CATHODE + PAUSE
         uint32_t T_intra_us          = hz_to_us(frequency_of_impulses);                              // period između pulseva
         uint32_t T_block_us          = hz_to_us(frequency);                                          // period između grupa (8)
 
@@ -294,30 +294,17 @@ static void impulse_thread(void *a, void *b, void *c)
 
             group_elapsed_us += one_pulse_us;
 
-            /* Odmor između pojedinačnih pulseva (osim posle 8-og) */
-            if (i < (PATTERN_LEN - 1)) {
-                uint32_t rest_us = (T_intra_us > one_pulse_us) ? (T_intra_us - one_pulse_us) : 0;
-                group_elapsed_us += rest_us;
+            // /* Odmor između pojedinačnih pulseva (osim posle 8-og) */
+            // if (i < (PATTERN_LEN - 1)) {
+            //     uint32_t rest_us = 2; 
+            //     group_elapsed_us += rest_us;
 
-                if (rest_us >= 2000) {
-                    k_msleep(rest_us / 1000);
-                    uint32_t rem = rest_us % 1000;
-                    if (rem) k_busy_wait(rem);
-                } else {
-                    k_busy_wait(rest_us);
-                }
-            }
+            //     // k_usleep(5);
+            // }
         }
 
-        /* Odmor između grupa (do perioda 'frequency') */
-        uint32_t inter_rest_us = (T_block_us > group_elapsed_us) ? (uint32_t)(T_block_us - group_elapsed_us) : 0;
-        if (inter_rest_us >= 2000) {
-            k_msleep(inter_rest_us / 1000);
-            uint32_t rem = inter_rest_us % 1000;
-            if (rem) k_busy_wait(rem);
-        } else {
-            k_busy_wait(inter_rest_us);
-        }
+        
+        k_usleep(T_block_us-group_elapsed_us-7000);
 
         /* spremi se za sledeću grupu; brojanje unutar grupe resetuješ po želji */
         number_of_pulses = 0;

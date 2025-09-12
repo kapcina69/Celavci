@@ -62,136 +62,136 @@ static bool parse_hex16(const char *tok, uint16_t *out)
 
 
 // --- Callback when receive data from NUS ---
-static void nus_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
-{
-    printk("Received BLE message:\n");
-
-    printk("  HEX: ");
-    for (uint16_t i = 0; i < len; i++) {
-        printk("%02X ", data[i]);
-    }
-
-    printk("\n  ASCII: ");
-    for (uint16_t i = 0; i < len; i++) {
-        if (data[i] >= 32 && data[i] <= 126) {
-            printk("%c", data[i]);
-        } else {
-            printk(".");
-        }
-    }
-    printk("\n");
-
-    process_command(data, len);
-}
-
-
-// Callback za aplikaciju
-
-// // --- Callback when receive data from NUS ---
 // static void nus_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
 // {
 //     printk("Received BLE message:\n");
 
-//     /* HEX prikaz */
 //     printk("  HEX: ");
 //     for (uint16_t i = 0; i < len; i++) {
 //         printk("%02X ", data[i]);
 //     }
-//     printk("\n");
 
-//     /* ASCII prikaz sa specijalnim karakterima */
-//     printk("  ASCII: ");
+//     printk("\n  ASCII: ");
 //     for (uint16_t i = 0; i < len; i++) {
-//         uint8_t c = data[i];
-        
-//         // Prikaz specijalnih karaktera koji se koriste u komandama
-//         if (c == '>') {
-//             printk(">");
-//         } else if (c == '<') {
-//             printk("<");
-//         } else if (c == ';') {
-//             printk(";");
-//         } else if (c == '\r') {
-//             printk("\\r");
-//         } else if (c == '\n') {
-//             printk("\\n");
-//         } else if (c == '\t') {
-//             printk("\\t");
-//         } else if (c >= 32 && c <= 126) {
-//             printk("%c", (char)c);
+//         if (data[i] >= 32 && data[i] <= 126) {
+//             printk("%c", data[i]);
 //         } else {
-//             printk("."); // Neštampajući karakteri
+//             printk(".");
 //         }
 //     }
 //     printk("\n");
-
-//     // Proveri da li je komanda u formatu >XX;...<
-//     if (len >= 5 && data[0] == '>' && data[len-1] == '<') {
-//         printk("  Format: Valid command structure\n");
-        
-//         // Pronađi ; u komandi
-//         const uint8_t *semicolon = memchr(data, ';', len);
-//         if (semicolon && semicolon > data && semicolon < data + len - 1) {
-//             // Izdvoji komandu (između > i ;)
-//             uint8_t cmd_len = semicolon - data - 1;
-//             if (cmd_len > 0 && cmd_len <= 3) {
-//                 char cmd[4] = {0};
-//                 memcpy(cmd, data + 1, cmd_len);
-//                 printk("  Command: %s\n", cmd);
-//             }
-            
-//             // Izdvoji argumente (između ; i <) - mogu biti binarni
-//             uint8_t arg_len = (data + len - 1) - semicolon - 1;
-//             if (arg_len > 0) {
-//                 printk("  Arguments (hex): ");
-//                 for (uint8_t i = 0; i < arg_len; i++) {
-//                     printk("%02X ", semicolon[1 + i]);
-//                 }
-//                 printk("\n");
-                
-//                 // Konvertuj binarnu vrednost u decimalnu (BIG-ENDIAN)
-//                 uint32_t decimal_value = 0;
-                
-//                 if (arg_len == 2) {
-//                     // 16-bitna vrednost (BIG-ENDIAN: prvi bajt je MSB, drugi je LSB)
-//                     decimal_value = (semicolon[1] << 8) | semicolon[2];
-//                     printk("  Decimal value: %lu\n", decimal_value);
-//                 }
-//                 else if (arg_len == 1) {
-//                     // 8-bitna vrednost
-//                     decimal_value = semicolon[1];
-//                     printk("  Decimal value: %lu\n", decimal_value);
-//                 }
-//                 else if (arg_len == 4) {
-//                     // 32-bitna vrednost (BIG-ENDIAN)
-//                     decimal_value = (semicolon[1] << 24) | (semicolon[2] << 16) | 
-//                                    (semicolon[3] << 8) | semicolon[4];
-//                     printk("  Decimal value: %lu\n", decimal_value);
-//                 }
-//                 else {
-//                     // Tekstualni argumenti
-//                     char args[128] = {0};
-//                     if (arg_len < sizeof(args) - 1) {
-//                         memcpy(args, semicolon + 1, arg_len);
-//                         args[arg_len] = '\0';
-//                         printk("  Text arguments: %s\n", args);
-                        
-//                         // Pokušaj da konvertuješ tekstualne brojeve
-//                         char *endptr;
-//                         long text_value = strtol(args, &endptr, 0);
-//                         if (endptr != args) {
-//                             printk("  Text numeric value: %ld\n", text_value);
-//                         }
-//                     }
-//                 }
-//             }
-//         }
-//     } else {
-//         printk("  Format: Invalid command structure\n");
-//     }
 
 //     process_command(data, len);
 // }
+
+
+// Callback za aplikaciju
+
+// --- Callback when receive data from NUS ---
+static void nus_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
+{
+    printk("Received BLE message:\n");
+
+    /* HEX prikaz */
+    printk("  HEX: ");
+    for (uint16_t i = 0; i < len; i++) {
+        printk("%02X ", data[i]);
+    }
+    printk("\n");
+
+    /* ASCII prikaz sa specijalnim karakterima */
+    printk("  ASCII: ");
+    for (uint16_t i = 0; i < len; i++) {
+        uint8_t c = data[i];
+        
+        // Prikaz specijalnih karaktera koji se koriste u komandama
+        if (c == '>') {
+            printk(">");
+        } else if (c == '<') {
+            printk("<");
+        } else if (c == ';') {
+            printk(";");
+        } else if (c == '\r') {
+            printk("\\r");
+        } else if (c == '\n') {
+            printk("\\n");
+        } else if (c == '\t') {
+            printk("\\t");
+        } else if (c >= 32 && c <= 126) {
+            printk("%c", (char)c);
+        } else {
+            printk("."); // Neštampajući karakteri
+        }
+    }
+    printk("\n");
+
+    // Proveri da li je komanda u formatu >XX;...<
+    if (len >= 5 && data[0] == '>' && data[len-1] == '<') {
+        printk("  Format: Valid command structure\n");
+        
+        // Pronađi ; u komandi
+        const uint8_t *semicolon = memchr(data, ';', len);
+        if (semicolon && semicolon > data && semicolon < data + len - 1) {
+            // Izdvoji komandu (između > i ;)
+            uint8_t cmd_len = semicolon - data - 1;
+            if (cmd_len > 0 && cmd_len <= 3) {
+                char cmd[4] = {0};
+                memcpy(cmd, data + 1, cmd_len);
+                printk("  Command: %s\n", cmd);
+            }
+            
+            // Izdvoji argumente (između ; i <) - mogu biti binarni
+            uint8_t arg_len = (data + len - 1) - semicolon - 1;
+            if (arg_len > 0) {
+                printk("  Arguments (hex): ");
+                for (uint8_t i = 0; i < arg_len; i++) {
+                    printk("%02X ", semicolon[1 + i]);
+                }
+                printk("\n");
+                
+                // Konvertuj binarnu vrednost u decimalnu (BIG-ENDIAN)
+                uint32_t decimal_value = 0;
+                
+                if (arg_len == 2) {
+                    // 16-bitna vrednost (BIG-ENDIAN: prvi bajt je MSB, drugi je LSB)
+                    decimal_value = (semicolon[1] << 8) | semicolon[2];
+                    printk("  Decimal value: %lu\n", decimal_value);
+                }
+                else if (arg_len == 1) {
+                    // 8-bitna vrednost
+                    decimal_value = semicolon[1];
+                    printk("  Decimal value: %lu\n", decimal_value);
+                }
+                else if (arg_len == 4) {
+                    // 32-bitna vrednost (BIG-ENDIAN)
+                    decimal_value = (semicolon[1] << 24) | (semicolon[2] << 16) | 
+                                   (semicolon[3] << 8) | semicolon[4];
+                    printk("  Decimal value: %lu\n", decimal_value);
+                }
+                else {
+                    // Tekstualni argumenti
+                    char args[128] = {0};
+                    if (arg_len < sizeof(args) - 1) {
+                        memcpy(args, semicolon + 1, arg_len);
+                        args[arg_len] = '\0';
+                        printk("  Text arguments: %s\n", args);
+                        
+                        // Pokušaj da konvertuješ tekstualne brojeve
+                        char *endptr;
+                        long text_value = strtol(args, &endptr, 0);
+                        if (endptr != args) {
+                            printk("  Text numeric value: %ld\n", text_value);
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        printk("  Format: Invalid command structure\n");
+    }
+
+    process_command(data, len);
+}
 
 /* --- Konekcioni parametri (stabilniji protiv reason 0x08) --- */
 static const struct bt_le_conn_param desired_param = {
@@ -356,681 +356,894 @@ uint8_t temperature = 38;
 uint8_t stim_state = 0;
 
 uint8_t new_frequency = 0;
+uint8_t freq_start = 0;
+uint8_t freq_end = 0;
+uint8_t freq_dur =0;
+bool freq_sweep;
 
-
-
-
-static void process_command(const uint8_t *data, uint16_t len)
+/**
+ * @brief Pošalji BLE poruku u formatu >XX;...< sa binarnim payload-om
+ *
+ * Primer:
+ *   send_kv_raw2("PW", (uint8_t[]){0x01, 0xF4}, 2);
+ *   -> šalje: 3E 50 57 3B 01 F4 3C   (ASCII ">PW;" + payload + "<")
+ *
+ * @param hdr2    Dva karaktera komande (npr. "PW", "SF", "XC")
+ * @param payload Pokazivač na bajtove payload-a (može NULL ako plen=0)
+ * @param plen    Broj bajtova payload-a
+ */
+static void send_kv_raw2(const char hdr2[2], const uint8_t *payload, size_t plen)
 {
-    char msg[160];
-    size_t cpy = (len < sizeof(msg) - 1) ? len : (sizeof(msg) - 1);
-    memcpy(msg, data, cpy);
-    msg[cpy] = '\0';
+    uint8_t buf[64];
+    size_t i = 0;
 
-    /* --- Trim trailing \r\n belina --- */
-    for (int i = (int)strlen(msg) - 1;
-         i >= 0 && isspace((unsigned char)msg[i]);
-         --i) {
-        msg[i] = '\0';
-    }
-    /* SON – Start stimulation */
-    if (strcmp(msg, ">SON<") == 0) {
-        if (!stimulation_running) {
-            stimulation_running = true;
-            start_pulse_sequence();
-            send_response("SONOK\r\n");
-        } else {
-            send_response("SONERR\r\n");
-        }
-        return;  
+    buf[i++] = '>';
+    buf[i++] = (uint8_t)hdr2[0];
+    buf[i++] = (uint8_t)hdr2[1];
+    buf[i++] = ';';
+
+    if (payload && plen) {
+        memcpy(&buf[i], payload, plen);
+        i += plen;
     }
 
-    if (strcmp(msg, ">OFF<") == 0) {
-        if (stimulation_running) {
-            stimulation_running = false;
-            stop_pulse_sequence();
-            send_response("OFFOK\r\n");
-        } else {
-            send_response("OFFERR\r\n");
+    buf[i++] = '<';
+
+    /* slanje preko BLE NUS-a */
+    int ret = bt_nus_send(NULL, buf, i);
+    if (ret) {
+        printk("[TX][ERR] bt_nus_send failed (%d)\n", ret);
+    } else {
+        printk("[TX] Sent %zu bytes: ", i);
+        for (size_t k = 0; k < i; k++) {
+            printk("%02X ", buf[k]);
         }
-        return;  
+        printk("\n");
     }
-        /* RCE – pokreni čitanje kontakata (bez argumenata) */
-    if (strcmp(msg, ">RCE<") == 0) {
-        if (RCE == 0) {
-            RCE = 1;                   // omogući režim čitanja za sledećih 8 impulsa
-            send_response(">RCE;OK<\r\n");
-        } else {
-            send_response(">RCE;BUSY<\r\n");
-        }
-        return;
-    }
-    if (strcmp(msg, ">RSC<") == 0) {
-        uint16_t soc = 0;
-        int ret = fuel_gauge_get_soc(&soc);   // wrapper funkcija u fuel_gauge.c
-        if (ret == 0) {
-            char resp[16];
-            snprintk(resp, sizeof(resp), ">RSC;%u<", soc);
-            send_response(resp);
-        } else {
-            send_response(">RSCERR<");
-        }
-        return;
-    }
-
-        /* RSTAT – vrati kompletno trenutno stanje (7 set + baterija + kontakti) */
-    if (strcmp(msg, ">RSS<") == 0) {
-        /* 1) SON/OFF */
-        if (stimulation_running) {
-            send_response(">SON<\r\n");
-        } else {
-            send_response(">OFF<\r\n");
-        }
-
-                /* 2) SA; v1 v2 ... v8 (decimal, kao u SA komandi) */
-        {
-            if (number_patter < patterns_count) {
-                char line[160];
-                char *p = line;
-                p += snprintk(p, sizeof(line) - (p - line), ">SA;");
-                for (int i = 0; i < PATTERN_LEN; i++) {
-                    uint16_t v = pulse_patterns[number_patter][i];
-                    p += snprintk(p, sizeof(line) - (p - line),
-                                  (i < PATTERN_LEN - 1) ? "0x%04X " : "0x%04X",
-                                  v);
-                }
-                p += snprintk(p, sizeof(line) - (p - line), "<\r\n");
-                send_response(line);
-            } else {
-                send_response(">SA;ERR<\r\n");
-            }
-        }
-
-
-        /* 3) SF;x */
-        {
-            char line[24];
-            snprintk(line, sizeof(line), ">SF;%u<\r\n", (unsigned)frequency);
-            send_response(line);
-        }
-
-        /* 4) PW;x */
-        {
-            char line[24];
-            snprintk(line, sizeof(line), ">PW;%u<\r\n", (unsigned)pulse_width);
-            send_response(line);
-        }
-
-        /* 5) SC;x  (koristimo aktivni pattern index / šemu) */
-        // {
-        //     char line[24];
-        //     snprintk(line, sizeof(line), ">SC;%u<\r\n", (unsigned)number_patter);
-        //     send_response(line);
-        // }
-
-        /* 6) ST;x  (trajanje stimulacije u sekundama) */
-        {
-            char line[24];
-            snprintk(line, sizeof(line), ">ST;%u<\r\n", (unsigned)stim_duration_s);
-            send_response(line);
-        }
-
-        /* 7) RSC;x  (State of Charge u %) */
-        {
-            uint16_t soc = 0;
-            int ret = fuel_gauge_get_soc(&soc);
-            if (ret == 0) {
-                char line[24];
-                snprintk(line, sizeof(line), ">RSC;%u<\r\n", (unsigned)soc);
-                send_response(line);
-            } else {
-                send_response(">RSCERR<\r\n");
-            }
-        }
-
-        /* 8) RCE;xx  (kontakt elektroda – poslednja poznata 8-bit maska) */
-        {
-            uint8_t mask = 0;
-            /* Ako imaš util iz SAADC podsistema: */
-            extern bool saadc_get_last_burst(uint8_t *out_mask);
-            if (saadc_get_last_burst(&mask)) {
-                char line[24];
-                snprintk(line, sizeof(line), ">RCE;%02X<\r\n", mask);
-                send_response(line);
-            } else {
-                /* Nema sveže maske – prijavi poslednju ili ERR */
-                send_response(">RCE;NA<\r\n");
-            }
-        }
-
-        return;
-    }
-
-
-    /* === Parsiranje komande u formatu >XX;ARGUMENTI< === */
-    char cmd[4] = {0};          /* podržava 2–3 slova, npr. "SA", "RSH" */
-    const char *arg = NULL;     /* pokazivač na argumente bez završnog '<' */
-    char arg_local[128] = {0};  /* lokalni bafer za argumente (od ';' do '<') */
-
-    const char *gt = strchr((const char *)msg, '>');
-    const char *lt = gt ? strchr(gt, '<') : NULL;     /* kraj poruke */
-    const char *sc = gt ? strchr(gt, ';') : NULL;     /* razdvajanje cmd/arg */
-
-    if (!gt) {
-        send_response(">ERR;NO_START<\r\n");
-        return;
-    }
-    if (!lt) {
-        send_response(">ERR;NO_END<\r\n");
-        return;
-    }
-
-    /* Komanda je između '>' i prvog ';' ili '<' (šta prvo naiđe) */
-    const char *cmd_end = (sc && sc < lt) ? sc : lt;
-    size_t clen = (size_t)(cmd_end - (gt + 1));
-    if (clen == 0 || clen > 3) {
-        send_response(">ERR;BAD_CMD<\r\n");
-        return;
-    }
-    memcpy(cmd, gt + 1, clen);
-    cmd[clen] = '\0';
-
-    /* Argumenti su između ';' i '<' (ako ima ';'), inače nema argumenata */
-    if (sc && sc < lt) {
-        size_t alen = (size_t)(lt - (sc + 1));
-        if (alen >= sizeof(arg_local)) alen = sizeof(arg_local) - 1;
-        memcpy(arg_local, sc + 1, alen);
-        arg_local[alen] = '\0';
-    }
-    arg = arg_local;
-
-    /* --- Dalje tvoj postojeći kod ostaje isti: koristi 'cmd' i 'arg' --- */
-
-
-    /* ============================================================
-    * Komanda SP – Set Pattern
-    * Format: SP;0xAABB 0xCCDD ... (8 vrednosti)
-    * ============================================================ */
-    if (strcmp(cmd, "SA") == 0) { // (tvoja trenutna logika ostaje)
-        uint16_t tmp[PATTERN_LEN];
-        int found = 0;
-
-        char buf[128];
-        size_t n = strnlen(arg, sizeof(buf) - 1);
-        memcpy(buf, arg, n);
-        buf[n] = '\0';
-
-        for (char *p = strtok(buf, " \t");
-            p != NULL && found < PATTERN_LEN;
-            p = strtok(NULL, " \t")) {
-            uint16_t v;
-            if (!parse_hex16(p, &v)) {
-                send_response("ERR: bad hex in SP\n");
-                return;
-            }
-            tmp[found++] = v;
-        }
-
-        if (found != PATTERN_LEN) {
-            send_response("ERR: need exactly 8 values\n");
-            return;
-        }
-        if (patterns_count >= MAX_PATTERNS) {
-            send_response("ERR: patterns full\n");
-            return;
-        }
-
-        for (int i = 0; i < PATTERN_LEN; ++i) {
-            pulse_patterns[patterns_count][i] = tmp[i];
-        }
-        size_t idx_added = patterns_count;
-        patterns_count++;
-
-        char ok[48];
-        snprintf(ok, sizeof(ok), "OK: SP stored as #%u\n", (unsigned)idx_added);
-        send_response(ok);
-        return;
-    }
-
-    /* ============================================================
-    * Komanda SM – Set active pattern
-    * Format: SM;x (decimal ili hex 0x..)
-    * ============================================================ */
-    if (strcmp(cmd, "SP") == 0) { // (tvoja trenutna logika ostaje)
-        long v = strtol(arg, NULL, 0);
-        if (v < 0 || (size_t)v >= patterns_count) {
-            send_response("ERR: invalid pattern index\n");
-            return;
-        }
-        number_patter = (size_t)v;
-
-        char ok[40];
-        snprintf(ok, sizeof(ok), "OK: active pattern=%ld\n", v);
-        send_response(ok);
-        return;
-    }
-
-    /* ============================================================
-    * Komanda XC – Set current amplitude per each channel
-    * Format: XC;x1 x2 x3 x4 x5 x6 x7 x8  (decimal 5–200)
-    * ============================================================ */
-    else if (strcmp(cmd, "XC") == 0) {
-        char buf[128];
-
-        size_t n = strnlen(arg, sizeof(buf) - 1);
-        memcpy(buf, arg, n);
-        buf[n] = '\0';
-
-        for (char *s = buf; *s; ++s) {
-            if (*s == ',') *s = ' ';
-        }
-
-        uint16_t tmp_vals[8];
-        int count = 0;
-
-        char *saveptr = NULL;
-        for (char *tok = strtok_r(buf, " \t", &saveptr);
-            tok && count < 8;
-            tok = strtok_r(NULL, " \t", &saveptr)) {
-
-            char *endp = NULL;
-            long v = strtol(tok, &endp, 10);
-
-            if (endp == tok || *endp != '\0' || v < 5 || v > 200) {
-                send_response(">SC;ERR<\r\n");
-                return;
-            }
-            tmp_vals[count++] = (uint16_t)v;
-        }
-
-        if (count != 8) {
-            send_response(">SC;ERR<\r\n");
-            return;
-        }
-
-        for (int i = 0; i < 8; ++i) {
-            pair_amplitude_uA[i] = tmp_vals[i];
-        }
-
-        send_response(">SC;OK<\r\n");
-        return;
-    }
-
-
-    /* ============================================================
-    * Ostale kratke komande oblika "XX;DECIMAL"
-    * ============================================================ */
-    int value = (int)strtol(arg, NULL, 10);
-
-    /* SF – Set frequency */
-    if (strcmp(cmd, "SF") == 0) {
-        if (value >= 1 && value <= 100) {
-            frequency = (uint8_t)value;
-            new_frequency = 1;
-            send_response(OK_MSG);
-        } else {
-            send_response(ERR_MSG);
-        }
-    }
-
-    /* PW – Set pulse width */
-    else if (strcmp(cmd, "PW") == 0) {
-        if (value >= 5 && value <= 100) {
-            pulse_width = (uint8_t)value;
-            send_response(OK_MSG);
-        } else {
-            send_response(ERR_MSG);
-        }
-    }
-
-    else if (strcmp(cmd, "ST") == 0) {
-        long v = strtol(arg, NULL, 10);
-        if (v >= 1 && v <= 36000) {
-            stim_duration_s = (uint32_t)v;
-            send_response(">ST;OK<\r\n");
-        } else {
-            send_response(">ST;ERR<\r\n");
-        }
-        return;
-    }
-
-    /* Nepoznata komanda */
-    else {
-        send_response(ERR_MSG);
-    }
-
 }
 
-
-// process command za aplikaciju
 
 
 // static void process_command(const uint8_t *data, uint16_t len)
 // {
-//     /* 0) Validacija okvira i pronalazak granica */
-//     if (!data || len < 3 || data[0] != '>' || data[len-1] != '<') {
-//         printk("[CMD] Bad frame: missing '>'/'<' (len=%u)\n", len);
-//         send_response(">ERR;BAD_FRAME<\r\n");
+//     char msg[160];
+//     size_t cpy = (len < sizeof(msg) - 1) ? len : (sizeof(msg) - 1);
+//     memcpy(msg, data, cpy);
+//     msg[cpy] = '\0';
+
+//     /* --- Trim trailing \r\n belina --- */
+//     for (int i = (int)strlen(msg) - 1;
+//          i >= 0 && isspace((unsigned char)msg[i]);
+//          --i) {
+//         msg[i] = '\0';
+//     }
+//     /* SON – Start stimulation */
+//     if (strcmp(msg, ">SON<") == 0) {
+//         if (!stimulation_running) {
+//             stimulation_running = true;
+//             start_pulse_sequence();
+//             send_response("SONOK\r\n");
+//         } else {
+//             send_response("SONERR\r\n");
+//         }
+//         return;  
+//     }
+
+//     if (strcmp(msg, ">OFF<") == 0) {
+//         if (stimulation_running) {
+//             stimulation_running = false;
+//             stop_pulse_sequence();
+//             send_response("OFFOK\r\n");
+//         } else {
+//             send_response("OFFERR\r\n");
+//         }
+//         return;  
+//     }
+//         /* RCE – pokreni čitanje kontakata (bez argumenata) */
+//     if (strcmp(msg, ">RCE<") == 0) {
+//         if (RCE == 0) {
+//             RCE = 1;                   // omogući režim čitanja za sledećih 8 impulsa
+//             send_response(">RCE;OK<\r\n");
+//         } else {
+//             send_response(">RCE;BUSY<\r\n");
+//         }
+//         return;
+//     }
+//     if (strcmp(msg, ">RSC<") == 0) {
+//         uint16_t soc = 0;
+//         int ret = fuel_gauge_get_soc(&soc);   // wrapper funkcija u fuel_gauge.c
+//         if (ret == 0) {
+//             char resp[16];
+//             snprintk(resp, sizeof(resp), ">RSC;%u<", soc);
+//             send_response(resp);
+//         } else {
+//             send_response(">RSCERR<");
+//         }
 //         return;
 //     }
 
-//     /* 1) Nađi ';' (ako ga ima) i izvuci CMD (2–3 slova) */
-//     const uint8_t *semicolon = memchr(data, ';', len);
-//     const uint8_t *cmd_start = data + 1;
-//     const uint8_t *cmd_end   = (semicolon ? semicolon : (data + len - 1));
-//     size_t cmd_len = (cmd_end > cmd_start) ? (size_t)(cmd_end - cmd_start) : 0;
-//     if (cmd_len == 0 || cmd_len > 3) {
-//         printk("[CMD] BAD_CMD: cmd_len=%u\n", (unsigned)cmd_len);
-//         send_response(">ERR;BAD_CMD<\r\n");
-//         return;
-//     }
+//         /* RSTAT – vrati kompletno trenutno stanje (7 set + baterija + kontakti) */
+//     if (strcmp(msg, ">RSS<") == 0) {
+//         /* 1) SON/OFF */
+//         if (stimulation_running) {
+//             send_response(">SON<\r\n");
+//         } else {
+//             send_response(">OFF<\r\n");
+//         }
 
-//     char cmd[4] = {0};
-//     memcpy(cmd, cmd_start, cmd_len);
-//     for (size_t i = 0; i < cmd_len; i++) cmd[i] = (char)toupper((unsigned char)cmd[i]);
-//     printk("[CMD] Command='%s'\n", cmd);
+//                 /* 2) SA; v1 v2 ... v8 (decimal, kao u SA komandi) */
+//         {
+//             if (number_patter < patterns_count) {
+//                 char line[160];
+//                 char *p = line;
+//                 p += snprintk(p, sizeof(line) - (p - line), ">SA;");
+//                 for (int i = 0; i < PATTERN_LEN; i++) {
+//                     uint16_t v = pulse_patterns[number_patter][i];
+//                     p += snprintk(p, sizeof(line) - (p - line),
+//                                   (i < PATTERN_LEN - 1) ? "0x%04X " : "0x%04X",
+//                                   v);
+//                 }
+//                 p += snprintk(p, sizeof(line) - (p - line), "<\r\n");
+//                 send_response(line);
+//             } else {
+//                 send_response(">SA;ERR<\r\n");
+//             }
+//         }
 
-//     /* 2) Bez-arg komande (čisto ASCII) */
-//     if (!semicolon) {
-//         if (strcmp(cmd, "SON") == 0) {
-//             if (!stimulation_running) {
-//                 stimulation_running = true;
-//                 start_pulse_sequence();
-//                 printk("[CMD] SON -> start OK\n");
-//                 send_response("SONOK\r\n");
-//             } else {
-//                 printk("[CMD] SON -> already running (ERR)\n");
-//                 send_response("SONERR\r\n");
-//             }
-//             return;
+
+//         /* 3) SF;x */
+//         {
+//             char line[24];
+//             snprintk(line, sizeof(line), ">SF;%u<\r\n", (unsigned)frequency);
+//             send_response(line);
 //         }
-//         if (strcmp(cmd, "OFF") == 0) {
-//             if (stimulation_running) {
-//                 stimulation_running = false;
-//                 stop_pulse_sequence();
-//                 printk("[CMD] OFF -> stop OK\n");
-//                 send_response("OFFOK\r\n");
-//             } else {
-//                 printk("[CMD] OFF -> already stopped (ERR)\n");
-//                 send_response("OFFERR\r\n");
-//             }
-//             return;
+
+//         /* 4) PW;x */
+//         {
+//             char line[24];
+//             snprintk(line, sizeof(line), ">PW;%u<\r\n", (unsigned)pulse_width);
+//             send_response(line);
 //         }
-//         if (strcmp(cmd, "RCE") == 0) {
-//             if (RCE == 0) {
-//                 RCE = 1;
-//                 printk("[CMD] RCE -> enabled for next 8 pulses\n");
-//                 send_response(">RCE;OK<\r\n");
-//             } else {
-//                 printk("[CMD] RCE -> BUSY already enabled\n");
-//                 send_response(">RCE;BUSY<\r\n");
-//             }
-//             return;
+
+//         /* 5) SC;x  (koristimo aktivni pattern index / šemu) */
+//         // {
+//         //     char line[24];
+//         //     snprintk(line, sizeof(line), ">SC;%u<\r\n", (unsigned)number_patter);
+//         //     send_response(line);
+//         // }
+
+//         /* 6) ST;x  (trajanje stimulacije u sekundama) */
+//         {
+//             char line[24];
+//             snprintk(line, sizeof(line), ">ST;%u<\r\n", (unsigned)stim_duration_s);
+//             send_response(line);
 //         }
-//         if (strcmp(cmd, "RSC") == 0) {
+
+//         /* 7) RSC;x  (State of Charge u %) */
+//         {
 //             uint16_t soc = 0;
 //             int ret = fuel_gauge_get_soc(&soc);
 //             if (ret == 0) {
-//                 char resp[16];
-//                 snprintk(resp, sizeof(resp), ">RSC;%u<", soc);
-//                 printk("[CMD] RSC -> %u%%\n", soc);
-//                 send_response(resp);
-//             } else {
-//                 printk("[CMD] RSC -> fuel_gauge_get_soc ERR=%d\n", ret);
-//                 send_response(">RSCERR<");
-//             }
-//             return;
-//         }
-//         if (strcmp(cmd, "RSS") == 0) {
-//             /* 1) SON/OFF */
-//             if (stimulation_running) { printk("[CMD] RSS -> SON\n"); send_response(">SON<\r\n"); }
-//             else                     { printk("[CMD] RSS -> OFF\n"); send_response(">OFF<\r\n"); }
-
-//             /* 2) SA;... */
-//             if (number_patter < patterns_count) {
-//                 char line[160]; char *p = line;
-//                 p += snprintk(p, sizeof(line)-(p-line), ">SA;");
-//                 for (int i = 0; i < PATTERN_LEN; i++) {
-//                     uint16_t v = pulse_patterns[number_patter][i];
-//                     p += snprintk(p, sizeof(line)-(p-line),
-//                                   (i < PATTERN_LEN-1) ? "0x%04X " : "0x%04X", v);
-//                 }
-//                 p += snprintk(p, sizeof(line)-(p-line), "<\r\n");
-//                 printk("[CMD] RSS -> SA for pattern #%u\n", (unsigned)number_patter);
+//                 char line[24];
+//                 snprintk(line, sizeof(line), ">RSC;%u<\r\n", (unsigned)soc);
 //                 send_response(line);
 //             } else {
-//                 printk("[CMD] RSS -> SA ERR (pattern idx=%u >= count=%u)\n",
-//                        (unsigned)number_patter, (unsigned)patterns_count);
-//                 send_response(">SA;ERR<\r\n");
+//                 send_response(">RSCERR<\r\n");
 //             }
-
-//             /* 3) SF, 4) PW, 6) ST */
-//             { char line[24]; snprintk(line, sizeof(line), ">SF;%u<\r\n", (unsigned)frequency); send_response(line); }
-//             { char line[24]; snprintk(line, sizeof(line), ">PW;%u<\r\n", (unsigned)pulse_width); send_response(line); }
-//             { char line[24]; snprintk(line, sizeof(line), ">ST;%u<\r\n", (unsigned)stim_duration_s); send_response(line); }
-
-//             /* 7) RSC */
-//             {   uint16_t soc = 0;
-//                 int ret = fuel_gauge_get_soc(&soc);
-//                 if (ret == 0) { char line[24]; snprintk(line, sizeof(line), ">RSC;%u<\r\n", (unsigned)soc); send_response(line); }
-//                 else          { send_response(">RSCERR<\r\n"); }
-//             }
-
-//             /* 8) RCE */
-//             {   uint8_t mask = 0;
-//                 extern bool saadc_get_last_burst(uint8_t *out_mask);
-//                 if (saadc_get_last_burst(&mask)) { char line[24]; snprintk(line, sizeof(line), ">RCE;%02X<\r\n", mask); send_response(line); }
-//                 else                              { send_response(">RCE;NA<\r\n"); }
-//             }
-//             return;
 //         }
 
-//         printk("[CMD] Unknown no-arg command '%s'\n", cmd);
-//         send_response(">ERR;UNKNOWN<\r\n");
-//         return;
-//     }
-
-//     /* 3) Imamo argumente: između ';' i '<' (mogu biti binarni ili tekst) */
-//     const uint8_t *arg_ptr = semicolon + 1;
-//     uint8_t arg_len = (uint8_t)((data + len - 1) - arg_ptr); /* bez '<' */
-//     printk("[CMD] Arg len=%u\n", arg_len);
-
-//     /* 3a) Ako su binarni, ponašaj se kao u tvom callback-u:
-//      *     - 1 bajt  => 8-bit, decimal
-//      *     - 2 bajta => 16-bit BIG-ENDIAN, decimal
-//      *     - 4 bajta => 32-bit BIG-ENDIAN, decimal
-//      *     - ostalo  => pokušaj kao tekst (ASCII broj, base 0)
-//      *
-//      *  DODATNI ZAHTEV (po tvom insistiranju ranije):
-//      *  Ako stigne više bajtova koji nisu čisti tekst, mi za komande sa jednom vrednošću
-//      *  koristimo pre svega decimalnu vrednost iz ove konverzije.
-//      */
-//     bool have_numeric = false;
-//     uint32_t dec_value = 0;
-
-//     if (arg_len == 1) {
-//         dec_value = arg_ptr[0];
-//         have_numeric = true;
-//         printk("[CMD] Numeric(8) = %lu\n", dec_value);
-//     } else if (arg_len == 2) {
-//         dec_value = ((uint32_t)arg_ptr[0] << 8) | (uint32_t)arg_ptr[1];
-//         have_numeric = true;
-//         printk("[CMD] Numeric(16 BE) = %lu\n", dec_value);
-//     } else if (arg_len == 4) {
-//         dec_value = ((uint32_t)arg_ptr[0] << 24) | ((uint32_t)arg_ptr[1] << 16) |
-//                     ((uint32_t)arg_ptr[2] << 8)  |  (uint32_t)arg_ptr[3];
-//         have_numeric = true;
-//         printk("[CMD] Numeric(32 BE) = %lu\n", dec_value);
-//     } else {
-//         /* Proveri da li je čisto tekstualno (printable) pa probaj strtol */
-//         bool printable = true;
-//         for (uint8_t i = 0; i < arg_len; i++) {
-//             uint8_t c = arg_ptr[i];
-//             if (c == '\r' || c == '\n' || c == '\t') continue;
-//             if (c < 32 || c > 126) { printable = false; break; }
-//         }
-//         if (printable && arg_len > 0) {
-//             char args[128] = {0};
-//             size_t copy = arg_len < sizeof(args)-1 ? arg_len : sizeof(args)-1;
-//             memcpy(args, arg_ptr, copy);
-//             args[copy] = '\0';
-//             char *endp = NULL;
-//             long tv = strtol(args, &endp, 0); /* dozvoljava 123, 0x1F, ... */
-//             if (endp != args) {
-//                 dec_value = (uint32_t)tv;
-//                 have_numeric = true;
-//                 printk("[CMD] Numeric(TEXT) = %ld\n", tv);
+//         /* 8) RCE;xx  (kontakt elektroda – poslednja poznata 8-bit maska) */
+//         {
+//             uint8_t mask = 0;
+//             /* Ako imaš util iz SAADC podsistema: */
+//             extern bool saadc_get_last_burst(uint8_t *out_mask);
+//             if (saadc_get_last_burst(&mask)) {
+//                 char line[24];
+//                 snprintk(line, sizeof(line), ">RCE;%02X<\r\n", mask);
+//                 send_response(line);
 //             } else {
-//                 printk("[CMD] TEXT args='%s' (non-numeric)\n", args);
+//                 /* Nema sveže maske – prijavi poslednju ili ERR */
+//                 send_response(">RCE;NA<\r\n");
 //             }
-//         } else {
-//             printk("[CMD] Non-printable multi-byte args (len=%u) -> no numeric\n", arg_len);
-//         }
-//     }
-
-//     /* 4) Jednopoljne komande koje koriste upravo ovu decimalnu vrednost */
-//     if (strcmp(cmd, "SF") == 0) {
-//         uint32_t sf_val = 0;
-//         bool valid = false;
-
-//         if (arg_len >= 1) {
-//             /* Specijalno: uzimamo SAMO prvi bajt kao decimalnu vrednost */
-//             sf_val = (uint32_t)arg_ptr[0];
-//             valid = true;
-//             printk("[CMD] SF special: using only first byte 0x%02X -> %lu\n",
-//                 arg_ptr[0], sf_val);
-//         } else {
-//             printk("[CMD] SF: no argument bytes\n");
 //         }
 
-//         if (!valid) {
-//             send_response(ERR_MSG);
-//             return;
-//         }
-
-//         if (sf_val >= 1 && sf_val <= 100) {
-//             frequency = (uint8_t)sf_val;
-//             new_frequency = 1;
-//             printk("[CMD] SF applied: %lu Hz\n", sf_val);
-//             send_response(OK_MSG);
-//         } else {
-//             printk("[CMD] SF rejected: out-of-range %lu\n", sf_val);
-//             send_response(ERR_MSG);
-//         }
 //         return;
 //     }
 
 
-//     if (strcmp(cmd, "PW") == 0) {
-//         if (!have_numeric) { printk("[CMD] PW: no numeric value\n"); send_response(ERR_MSG); return; }
-//         if (dec_value >= 50 && dec_value <= 1000) {
-//             pulse_width = (uint8_t)dec_value;
-//             printk("[CMD] PW applied: %lu\n", dec_value);
-//             send_response(OK_MSG);
-//         } else {
-//             printk("[CMD] PW rejected: out-of-range %lu\n", dec_value);
-//             send_response(ERR_MSG);
-//         }
+//     /* === Parsiranje komande u formatu >XX;ARGUMENTI< === */
+//     char cmd[4] = {0};          /* podržava 2–3 slova, npr. "SA", "RSH" */
+//     const char *arg = NULL;     /* pokazivač na argumente bez završnog '<' */
+//     char arg_local[128] = {0};  /* lokalni bafer za argumente (od ';' do '<') */
+
+//     const char *gt = strchr((const char *)msg, '>');
+//     const char *lt = gt ? strchr(gt, '<') : NULL;     /* kraj poruke */
+//     const char *sc = gt ? strchr(gt, ';') : NULL;     /* razdvajanje cmd/arg */
+
+//     if (!gt) {
+//         send_response(">ERR;NO_START<\r\n");
+//         return;
+//     }
+//     if (!lt) {
+//         send_response(">ERR;NO_END<\r\n");
 //         return;
 //     }
 
-//     if (strcmp(cmd, "SC") == 0) {
-//         if (!have_numeric) { printk("[CMD] SC: no numeric value\n"); send_response(">SC;ERR<\r\n"); return; }
-//         if ((size_t)dec_value < patterns_count) {
-//             number_patter = (size_t)dec_value;
-//             printk("[CMD] SC applied: active pattern=%lu\n", dec_value);
-//             send_response(">SC;OK<\r\n");
-//         } else {
-//             printk("[CMD] SC rejected: idx=%lu >= count=%u\n", dec_value, (unsigned)patterns_count);
-//             send_response(">SC;ERR<\r\n");
-//         }
+//     /* Komanda je između '>' i prvog ';' ili '<' (šta prvo naiđe) */
+//     const char *cmd_end = (sc && sc < lt) ? sc : lt;
+//     size_t clen = (size_t)(cmd_end - (gt + 1));
+//     if (clen == 0 || clen > 3) {
+//         send_response(">ERR;BAD_CMD<\r\n");
 //         return;
 //     }
+//     memcpy(cmd, gt + 1, clen);
+//     cmd[clen] = '\0';
 
-//     if (strcmp(cmd, "ST") == 0) {
-//         if (!have_numeric) { printk("[CMD] ST: no numeric value\n"); send_response(">ST;ERR<\r\n"); return; }
-//         if (dec_value >= 1 && dec_value <= 36000) {
-//             stim_duration_s = (uint32_t)dec_value;
-//             printk("[CMD] ST applied: %lu s\n", dec_value);
-//             send_response(">ST;OK<\r\n");
-//         } else {
-//             printk("[CMD] ST rejected: out-of-range %lu\n", dec_value);
-//             send_response(">ST;ERR<\r\n");
-//         }
-//         return;
+//     /* Argumenti su između ';' i '<' (ako ima ';'), inače nema argumenata */
+//     if (sc && sc < lt) {
+//         size_t alen = (size_t)(lt - (sc + 1));
+//         if (alen >= sizeof(arg_local)) alen = sizeof(arg_local) - 1;
+//         memcpy(arg_local, sc + 1, alen);
+//         arg_local[alen] = '\0';
 //     }
+//     arg = arg_local;
 
-//     /* 5) Višeargumentne ASCII komande (SA/SP/XC) — očekuju tekstualne argumente */
-//     if (strcmp(cmd, "SA") == 0) {
-//         if (arg_len == 0) { printk("[CMD] SA: no args\n"); send_response("ERR: need 8 values\n"); return; }
+//     /* --- Dalje tvoj postojeći kod ostaje isti: koristi 'cmd' i 'arg' --- */
+
+
+//     /* ============================================================
+//     * Komanda SP – Set Pattern
+//     * Format: SP;0xAABB 0xCCDD ... (8 vrednosti)
+//     * ============================================================ */
+//     if (strcmp(cmd, "SA") == 0) { // (tvoja trenutna logika ostaje)
+//         uint16_t tmp[PATTERN_LEN];
+//         int found = 0;
+
 //         char buf[128];
-//         size_t copy = arg_len < sizeof(buf)-1 ? arg_len : sizeof(buf)-1;
-//         memcpy(buf, arg_ptr, copy);
-//         buf[copy] = '\0';
+//         size_t n = strnlen(arg, sizeof(buf) - 1);
+//         memcpy(buf, arg, n);
+//         buf[n] = '\0';
 
-//         uint16_t tmp[PATTERN_LEN]; int found = 0;
-//         for (char *p = strtok(buf, " \t"); p && found < PATTERN_LEN; p = strtok(NULL, " \t")) {
+//         for (char *p = strtok(buf, " \t");
+//             p != NULL && found < PATTERN_LEN;
+//             p = strtok(NULL, " \t")) {
 //             uint16_t v;
-//             if (!parse_hex16(p, &v)) { printk("[CMD] SA: bad hex '%s'\n", p); send_response("ERR: bad hex in SP\n"); return; }
+//             if (!parse_hex16(p, &v)) {
+//                 send_response("ERR: bad hex in SP\n");
+//                 return;
+//             }
 //             tmp[found++] = v;
 //         }
 
-//         if (found != PATTERN_LEN)            { printk("[CMD] SA: need 8 values, got %d\n", found); send_response("ERR: need exactly 8 values\n"); return; }
-//         if (patterns_count >= MAX_PATTERNS)  { printk("[CMD] SA: patterns full\n"); send_response("ERR: patterns full\n"); return; }
+//         if (found != PATTERN_LEN) {
+//             send_response("ERR: need exactly 8 values\n");
+//             return;
+//         }
+//         if (patterns_count >= MAX_PATTERNS) {
+//             send_response("ERR: patterns full\n");
+//             return;
+//         }
 
-//         for (int i = 0; i < PATTERN_LEN; ++i) pulse_patterns[patterns_count][i] = tmp[i];
-//         size_t idx_added = patterns_count++;
-//         printk("[CMD] SA stored as #%u\n", (unsigned)idx_added);
-//         char ok[48]; snprintf(ok, sizeof(ok), "OK: SP stored as #%u\n", (unsigned)idx_added);
+//         for (int i = 0; i < PATTERN_LEN; ++i) {
+//             pulse_patterns[patterns_count][i] = tmp[i];
+//         }
+//         size_t idx_added = patterns_count;
+//         patterns_count++;
+
+//         char ok[48];
+//         snprintf(ok, sizeof(ok), "OK: SP stored as #%u\n", (unsigned)idx_added);
 //         send_response(ok);
 //         return;
 //     }
 
-//     if (strcmp(cmd, "SP") == 0) {
-//         if (arg_len == 0) { printk("[CMD] SP: no arg\n"); send_response("ERR: invalid pattern index\n"); return; }
-//         char buf[32];
-//         size_t copy = arg_len < sizeof(buf)-1 ? arg_len : sizeof(buf)-1;
-//         memcpy(buf, arg_ptr, copy);
-//         buf[copy] = '\0';
-
-//         long v = strtol(buf, NULL, 0);
+//     /* ============================================================
+//     * Komanda SM – Set active pattern
+//     * Format: SM;x (decimal ili hex 0x..)
+//     * ============================================================ */
+//     if (strcmp(cmd, "SP") == 0) { // (tvoja trenutna logika ostaje)
+//         long v = strtol(arg, NULL, 0);
 //         if (v < 0 || (size_t)v >= patterns_count) {
-//             printk("[CMD] SP rejected: idx=%ld >= count=%u\n", v, (unsigned)patterns_count);
 //             send_response("ERR: invalid pattern index\n");
 //             return;
 //         }
 //         number_patter = (size_t)v;
-//         printk("[CMD] SP applied: active pattern=%ld\n", v);
-//         char ok[40]; snprintf(ok, sizeof(ok), "OK: active pattern=%ld\n", v);
+
+//         char ok[40];
+//         snprintf(ok, sizeof(ok), "OK: active pattern=%ld\n", v);
 //         send_response(ok);
 //         return;
 //     }
 
-//     if (strcmp(cmd, "XC") == 0) {
-//         if (arg_len == 0) { printk("[CMD] XC: no args\n"); send_response(">SC;ERR<\r\n"); return; }
+//     /* ============================================================
+//     * Komanda XC – Set current amplitude per each channel
+//     * Format: XC;x1 x2 x3 x4 x5 x6 x7 x8  (decimal 5–200)
+//     * ============================================================ */
+//     else if (strcmp(cmd, "XC") == 0) {
 //         char buf[128];
-//         size_t copy = arg_len < sizeof(buf)-1 ? arg_len : sizeof(buf)-1;
-//         memcpy(buf, arg_ptr, copy);
-//         buf[copy] = '\0';
-//         for (char *s = buf; *s; ++s) if (*s == ',') *s = ' ';
 
-//         uint16_t tmp_vals[8]; int count = 0; char *saveptr = NULL;
-//         for (char *tok = strtok_r(buf, " \t", &saveptr); tok && count < 8; tok = strtok_r(NULL, " \t", &saveptr)) {
-//             char *endp = NULL; long v = strtol(tok, &endp, 10);
+//         size_t n = strnlen(arg, sizeof(buf) - 1);
+//         memcpy(buf, arg, n);
+//         buf[n] = '\0';
+
+//         for (char *s = buf; *s; ++s) {
+//             if (*s == ',') *s = ' ';
+//         }
+
+//         uint16_t tmp_vals[8];
+//         int count = 0;
+
+//         char *saveptr = NULL;
+//         for (char *tok = strtok_r(buf, " \t", &saveptr);
+//             tok && count < 8;
+//             tok = strtok_r(NULL, " \t", &saveptr)) {
+
+//             char *endp = NULL;
+//             long v = strtol(tok, &endp, 10);
+
 //             if (endp == tok || *endp != '\0' || v < 5 || v > 200) {
-//                 printk("[CMD] XC rejected token='%s'\n", tok);
 //                 send_response(">SC;ERR<\r\n");
 //                 return;
 //             }
 //             tmp_vals[count++] = (uint16_t)v;
 //         }
-//         if (count != 8) { printk("[CMD] XC: need 8 values, got %d\n", count); send_response(">SC;ERR<\r\n"); return; }
-//         for (int i = 0; i < 8; ++i) pair_amplitude_uA[i] = tmp_vals[i];
-//         printk("[CMD] XC applied\n");
+
+//         if (count != 8) {
+//             send_response(">SC;ERR<\r\n");
+//             return;
+//         }
+
+//         for (int i = 0; i < 8; ++i) {
+//             pair_amplitude_uA[i] = tmp_vals[i];
+//         }
+
 //         send_response(">SC;OK<\r\n");
 //         return;
 //     }
 
-//     printk("[CMD] Unknown command with args '%s'\n", cmd);
-//     send_response(">ERR;UNKNOWN<\r\n");
+
+//     /* ============================================================
+//     * Ostale kratke komande oblika "XX;DECIMAL"
+//     * ============================================================ */
+//     int value = (int)strtol(arg, NULL, 10);
+
+//     /* SF – Set frequency */
+//     if (strcmp(cmd, "SF") == 0) {
+//         if (value >= 1 && value <= 100) {
+//             frequency = (uint8_t)value;
+//             new_frequency = 1;
+//             send_response(OK_MSG);
+//         } else {
+//             send_response(ERR_MSG);
+//         }
+//     }
+
+//     /* PW – Set pulse width */
+//     else if (strcmp(cmd, "PW") == 0) {
+//         if (value >= 5 && value <= 100) {
+//             pulse_width = (uint8_t)value;
+//             send_response(OK_MSG);
+//         } else {
+//             send_response(ERR_MSG);
+//         }
+//     }
+
+//     else if (strcmp(cmd, "ST") == 0) {
+//         long v = strtol(arg, NULL, 10);
+//         if (v >= 1 && v <= 36000) {
+//             stim_duration_s = (uint32_t)v;
+//             send_response(">ST;OK<\r\n");
+//         } else {
+//             send_response(">ST;ERR<\r\n");
+//         }
+//         return;
+//     }
+
+//     /* Nepoznata komanda */
+//     else {
+//         send_response(ERR_MSG);
+//     }
+
 // }
+
+
+// process command za aplikaciju
+
+
+static void process_command(const uint8_t *data, uint16_t len)
+{
+    /* 0) Validacija okvira i pronalazak granica */
+    if (!data || len < 3 || data[0] != '>' || data[len-1] != '<') {
+        printk("[CMD] Bad frame: missing '>'/'<' (len=%u)\n", len);
+        send_response(">ERR;BAD_FRAME<\r\n");
+        return;
+    }
+
+    /* 1) Nađi ';' (ako ga ima) i izvuci CMD (2–3 slova) */
+    const uint8_t *semicolon = memchr(data, ';', len);
+    const uint8_t *cmd_start = data + 1;
+    const uint8_t *cmd_end   = (semicolon ? semicolon : (data + len - 1));
+    size_t cmd_len = (cmd_end > cmd_start) ? (size_t)(cmd_end - cmd_start) : 0;
+    if (cmd_len == 0 || cmd_len > 3) {
+        printk("[CMD] BAD_CMD: cmd_len=%u\n", (unsigned)cmd_len);
+        send_response(">ERR;BAD_CMD<\r\n");
+        return;
+    }
+
+    char cmd[4] = {0};
+    memcpy(cmd, cmd_start, cmd_len);
+    for (size_t i = 0; i < cmd_len; i++) cmd[i] = (char)toupper((unsigned char)cmd[i]);
+    printk("[CMD] Command='%s'\n", cmd);
+
+    /* 2) Bez-arg komande (čisto ASCII) */
+    if (!semicolon) {
+        if (strcmp(cmd, "SON") == 0) {
+            if (!stimulation_running) {
+                stimulation_running = true;
+                start_pulse_sequence();
+                printk("[CMD] SON -> start OK\n");
+                send_response("SONOK\r\n");
+            } else {
+                printk("[CMD] SON -> already running (ERR)\n");
+                send_response("SONERR\r\n");
+            }
+            return;
+        }
+        if (strcmp(cmd, "OFF") == 0) {
+            if (stimulation_running) {
+                stimulation_running = false;
+                stop_pulse_sequence();
+                printk("[CMD] OFF -> stop OK\n");
+                send_response("OFFOK\r\n");
+            } else {
+                printk("[CMD] OFF -> already stopped (ERR)\n");
+                send_response("OFFERR\r\n");
+            }
+            return;
+        }
+        if (strcmp(cmd, "RCE") == 0) {
+            if (RCE == 0) {
+                RCE = 1;
+                printk("[CMD] RCE -> enabled for next 8 pulses\n");
+                send_response(">RCE;OK<\r\n");
+            } else {
+                printk("[CMD] RCE -> BUSY already enabled\n");
+                send_response(">RCE;BUSY<\r\n");
+            }
+            return;
+        }
+        if (strcmp(cmd, "RSC") == 0) {
+            uint16_t soc = 0;
+            int ret = fuel_gauge_get_soc(&soc);
+            if (ret == 0) {
+                char resp[16];
+                snprintk(resp, sizeof(resp), ">RSC;%u<", soc);
+                printk(">RSC;%u<", soc);
+                send_response(resp);
+            } else {
+                printk("[CMD] RSC -> fuel_gauge_get_soc ERR=%d\n", ret);
+                send_response(">RSCERR<");
+            }
+            return;
+        }
+        if (strcmp(cmd, "RSS") == 0) {
+                /* 1) SON/OFF – bez payload-a */
+                if (stimulation_running) {
+                    printk("[CMD] RSS -> SON\n");
+                    send_response(">SON<\r\n");   /* ostaje čisti ASCII bez payload-a */
+                } else {
+                    printk("[CMD] RSS -> OFF\n");
+                    send_response(">OFF<\r\n");
+                }
+
+                /* 2) SA; 8 bajtova (aktivni pattern kao 8 vrednosti/bajtova) */
+                if (number_patter < patterns_count) {
+                    uint8_t sa_payload[8];
+                    for (int i = 0; i < 8; ++i) {
+                        /* ako su ti patterni uint16_t, ovde uzimaš npr. low byte */
+                        uint16_t v = pulse_patterns[number_patter][i];
+                        sa_payload[i] = (uint8_t)(v & 0xFF);
+                    }
+                    printk("[CMD] RSS -> SA for pattern #%u\n", (unsigned)number_patter);
+                    send_kv_raw2("SA", sa_payload, sizeof(sa_payload));
+                } else {
+                    printk("[CMD] RSS -> SA ERR (pattern idx=%u >= count=%u)\n",
+                        (unsigned)number_patter, (unsigned)patterns_count);
+                    send_response(">SA;ERR<\r\n");
+                }
+
+                /* 3) SF; 3 bajta: start, end, dur (po novom protokolu) */
+                {
+                    uint8_t sf_payload[3];
+                    /* constant: dur=0 i start==end; range: dur>0 */
+                    sf_payload[0] = freq_start;
+                    sf_payload[1] = freq_end;
+                    sf_payload[2] = freq_dur;  /* sekunde (ili kako si definisao) */
+                    printk("[CMD] RSS -> SF start=%u end=%u dur=%u\n",
+                        sf_payload[0], sf_payload[1], sf_payload[2]);
+                    send_kv_raw2("SF", sf_payload, sizeof(sf_payload));
+                }
+
+                /* 4) PW; 2 bajta (big-endian, 50..1000) */
+                {
+                    uint16_t pw = pulse_width; /* napomena: pulse_width mora biti uint16_t */
+                    uint8_t pw_payload[2] = { (uint8_t)(pw >> 8), (uint8_t)(pw & 0xFF) };
+                    printk("[CMD] RSS -> PW=%u\n", pw);
+                    send_kv_raw2("PW", pw_payload, sizeof(pw_payload));
+                }
+
+                /* 5) ST; 1 bajt (trajanje u sekundama po novom pravilu) */
+                {
+                    uint8_t st_payload = (stim_duration_s > 255) ? 255 : (uint8_t)stim_duration_s;
+                    printk("[CMD] RSS -> ST=%u s\n", st_payload);
+                    send_kv_raw2("ST", &st_payload, 1);
+                }
+
+                /* 6) RSC; 2 bajta (raw hex iz fuel_gauge_get_soc) */
+                {
+                    uint16_t soc_raw = 0;
+                    int ret = fuel_gauge_get_soc(&soc_raw);
+                    if (ret == 0) {
+                        uint8_t rsc_payload[2] = { (uint8_t)(soc_raw >> 8), (uint8_t)(soc_raw & 0xFF) };
+                        printk("[CMD] RSS -> RSC raw=0x%04X\n", soc_raw);
+                        send_kv_raw2("RSC", rsc_payload, sizeof(rsc_payload));
+                    } else {
+                        printk("[CMD] RSS -> RSC ERR=%d\n", ret);
+                        send_response(">RSCERR<\r\n");
+                    }
+                }
+
+                /* 7) RCE; 1 bajt (poslednja maska kontakata) */
+                {
+                    uint8_t mask = 0;
+                    extern bool saadc_get_last_burst(uint8_t *out_mask);
+                    if (saadc_get_last_burst(&mask)) {
+                        printk("[CMD] RSS -> RCE mask=0x%02X\n", mask);
+                        send_kv_raw2("RCE", &mask, 1);
+                    } else {
+                        send_response(">RCE;NA<\r\n");
+                    }
+                }
+
+                return;
+            }
+
+
+        printk("[CMD] Unknown no-arg command '%s'\n", cmd);
+        send_response(">ERR;UNKNOWN<\r\n");
+        return;
+    }
+
+        /* 3) Argumenti: strogo između ';' i '<' (HEX bajtovi) */
+    const uint8_t *lt_ptr = memchr(data, '<', len);
+    if (!semicolon || !lt_ptr || semicolon >= lt_ptr) {
+        printk("[CMD] BAD_FRAME: semicolon/lt mismatch\n");
+        send_response(">ERR;BAD_FRAME<\r\n");
+        return;
+    }
+
+    const uint8_t *arg_ptr = semicolon + 1;
+    uint16_t arg_len = (uint16_t)(lt_ptr - arg_ptr); /* '<' NE ulazi */
+    printk("[CMD] Arg len=%u\n", (unsigned)arg_len);
+
+    /* === SF: uvek 3 bajta HEX: start(Hz), end(Hz), dur(s) === */
+    if (strcmp(cmd, "SF") == 0) {
+        if (arg_len != 3) {
+            printk("[CMD] SF rejected: arg_len=%u (expected 3)\n", (unsigned)arg_len);
+            send_response(">ERR<");
+            return;
+        }
+        uint8_t start_v = arg_ptr[0];
+        uint8_t end_v   = arg_ptr[1];
+        uint8_t dur_v   = arg_ptr[2];
+        frequency = start_v;  // default
+        printk("[CMD] SF RAW(3): start=%u, end=%u, dur=%u\n", start_v, end_v, dur_v);
+
+        /* Validacija opsega 1..100 Hz */
+        if (start_v < 1 || start_v > 100 || end_v < 1 || end_v > 100) {
+            printk("[CMD] SF rejected: out of range (start=%u, end=%u)\n", start_v, end_v);
+            send_response(">ERR<");
+            return;
+        }
+
+        if (dur_v == 0) {
+            if (start_v != end_v) {
+                printk("[CMD] SF rejected: dur=0 but start!=end\n");
+                send_response(">ERR<");
+                return;
+            }
+            /* CONSTANT MODE */
+            frequency      = start_v;
+            new_frequency  = 1;
+            freq_start     = start_v;
+            freq_end       = end_v;
+            freq_dur       = 0;
+            freq_sweep     = false;
+            printk("[CMD] SF applied: CONSTANT %u Hz\n", start_v);
+            send_response(">OK<");
+            return;
+        } 
+        else {
+            /* RANGE MODE, zahtevamo start<=end (po potrebi dozvoli i obrnuto) */
+            if (start_v > end_v) {
+                printk("[CMD] SF rejected: start(%u) > end(%u)\n", start_v, end_v);
+                send_response(">ERR<");
+                return;
+            }
+            freq_start = start_v;
+            freq_end   = end_v;
+            freq_dur   = dur_v;
+            freq_sweep = true;
+            printk("[CMD] SF applied: RANGE %u..%u Hz, dur=%u s\n", start_v, end_v, dur_v);
+            send_response(">OK<");
+            return;
+        }
+    }
+
+    /* === PW: 2 bajta HEX (16-bit big-endian), opseg 50..1000 === */
+    if (strcmp(cmd, "PW") == 0) {
+        if (arg_len != 2) {
+            printk("[CMD] PW rejected: arg_len=%u (expected 2)\n", (unsigned)arg_len);
+            send_response(">ERR<");
+            return;
+        }
+
+        uint16_t v = ((uint16_t)arg_ptr[0] << 8) | (uint16_t)arg_ptr[1];
+        printk("[CMD] PW RAW(2): %u\n", v);
+
+        if (v >= 50 && v <= 1000) {
+            pulse_width = v/20;
+            printk("[CMD] PW applied: %u\n", v);
+            send_response(">OK<");
+        } else {
+            printk("[CMD] PW rejected: out-of-range %u\n", v);
+            send_response(">ERR<");
+        }
+        return;
+    }
+
+
+    /* === SP: 1 bajt HEX – set active pattern index === */
+    if (strcmp(cmd, "SP") == 0) {
+        if (arg_len != 1) {
+            printk("[CMD] SP rejected: arg_len=%u (expected 1)\n", (unsigned)arg_len);
+            send_response("ERR: invalid pattern index\n");
+            return;
+        }
+        uint8_t idx = arg_ptr[0];
+        if ((size_t)idx < patterns_count) {
+            number_patter = (size_t)idx;
+            printk("[CMD] SP applied: active pattern=%u\n", idx);
+            char ok[40]; snprintf(ok, sizeof(ok), "OK: active pattern=%u\n", idx);
+            send_response(ok);
+        } else {
+            printk("[CMD] SP rejected: idx=%u >= count=%u\n", idx, (unsigned)patterns_count);
+            send_response("ERR: invalid pattern index\n");
+        }
+        return;
+    }
+
+    /* === ST: 1 bajt HEX – trajanje u sekundama (1..255) === */
+    if (strcmp(cmd, "ST") == 0) {
+        if (arg_len != 1) {
+            printk("[CMD] ST rejected: arg_len=%u (expected 1)\n", (unsigned)arg_len);
+            send_response(">ST;ERR<\r\n");
+            return;
+        }
+        uint8_t sec = arg_ptr[0];
+        if (sec >= 1 /*&& sec <= 255*/) {
+            stim_duration_s = (uint32_t)sec;
+            printk("[CMD] ST applied: %u s\n", sec);
+            send_response(">ST;OK<\r\n");
+        } else {
+            printk("[CMD] ST rejected: out-of-range %u\n", sec);
+            send_response(">ST;ERR<\r\n");
+        }
+        return;
+    }
+
+    /* === SA: 8 bajtova HEX – upiši u aktivni pattern kao 8 vrednosti === */
+    if (strcmp(cmd, "SA") == 0) {
+        if (arg_len != 8) {
+            printk("[CMD] SA rejected: arg_len=%u (expected 8)\n", (unsigned)arg_len);
+            send_response("ERR: need exactly 8 values\n");
+            return;
+        }
+        if (number_patter >= patterns_count) {
+            printk("[CMD] SA rejected: active pattern idx=%u out of range (count=%u)\n",
+                (unsigned)number_patter, (unsigned)patterns_count);
+            send_response("ERR: invalid active pattern\n");
+            return;
+        }
+        for (int i = 0; i < 8; ++i) {
+            /* Ako je pulse_patterns[][] tipa uint16_t, mapiramo bajt->u16 */
+            pulse_patterns[number_patter][i] = (uint16_t)arg_ptr[i];
+        }
+        printk("[CMD] SA applied to pattern #%u\n", (unsigned)number_patter);
+        send_response("OK: SA stored\n");
+        return;
+    }
+
+    /* === XC: 8 bajtova HEX – amplitude po kanalima (5..200) === */
+    if (strcmp(cmd, "XC") == 0) {
+        if (arg_len != 8) {
+            printk("[CMD] XC rejected: arg_len=%u (expected 8)\n", (unsigned)arg_len);
+            send_response(">SC;ERR<\r\n");
+            return;
+        }
+        for (int i = 0; i < 8; ++i) {
+            uint8_t v = arg_ptr[i];
+            if (v < 5 || v > 200) {
+                printk("[CMD] XC rejected: ch%d=%u out-of-range\n", i, v);
+                send_response(">SC;ERR<\r\n");
+                return;
+            }
+        }
+        for (int i = 0; i < 8; ++i) {
+            pair_amplitude_uA[i] = arg_ptr[i];
+        }
+        printk("[CMD] XC applied\n");
+        send_response(">SC;OK<\r\n");
+        return;
+    }
+
+    /* Ako je stigla neka druga komanda sa argumentima koju nismo definisali po novom protokolu */
+    printk("[CMD] Unknown command with fixed-HEX args '%s' (len=%u)\n", cmd, (unsigned)arg_len);
+    send_response(">ERR;UNKNOWN<\r\n");
+
+   
+}
+
+
+
+
+/* === Frequency sweep thread ============================================
+ * Parametri (puni ih SF komanda):
+ *   freq_start  : 1..100  (Hz)
+ *   freq_end    : 1..100  (Hz)
+ *   freq_dur    : trajanje svake frekvencije u SEKUNDAMA;
+ *                 0 => constant mode (nema menjanja)
+ *   freq_sweep  : false => constant mode, true => changing (range)
+ *
+ * Napomena:
+ * - Ako freq_sweep == false ili freq_dur == 0, ovaj thread samo obezbedi
+ *   da je frequency = freq_start, i onda miruje.
+ * - Ako freq_sweep == true i freq_dur > 0:
+ *     - bira smer (+1 ili -1) na osnovu start<=end
+ *     - menja frequency svakih freq_dur sekundi unutar [start..end]
+ *     - po dolasku do kraja opsega, vraća se na početak (wrap)
+ */
+
+#include <zephyr/kernel.h>
+
+#ifndef FREQ_THREAD_STACK_SIZE
+#define FREQ_THREAD_STACK_SIZE 1024
+#endif
+
+#ifndef FREQ_THREAD_PRIO
+#define FREQ_THREAD_PRIO 5
+#endif
+
+
+
+
+
+static void set_frequency_safe(uint8_t f_hz)
+{
+    frequency     = f_hz;
+    new_frequency = 1;
+
+    // printk("[FREQ] set %u Hz\n", f_hz);
+}
+
+/* Core petlja za sweep */
+static void freq_sweep_loop(void)
+{
+    /* Lokalna kopija parametara da izbegnemo trkanje tokom jedne iteracije */
+    uint8_t start = freq_start;
+    uint8_t end   = freq_end;
+    uint8_t dur_s = freq_dur;
+
+    /* Validacija i normalizacija */
+    if (start < 1) start = 1;
+    if (start > 100) start = 100;
+    if (end   < 1) end   = 1;
+    if (end   > 100) end = 100;
+
+    if (!freq_sweep || dur_s == 0) {
+        /* CONSTANT MODE */
+        set_frequency_safe(start);
+        /* Nema menjanja; nežno spavaj pa proveravaj parametre povremeno */
+        k_msleep(500);
+        return;
+    }
+
+    /* CHANGING/RANGE MODE */
+    /* Definiši smer i trenutnu */
+    int dir = (start <= end) ? +1 : -1;
+
+    /* Ako želiš dozvoljen i opadajući “down-sweep”, samo menjaj dir=-1 i opseg [end..start] */
+    uint8_t cur = start;
+
+    /* Uđi u ciklus; svaki “step” traje dur_s sekundi */
+    set_frequency_safe(cur);
+
+    /* Napomena: Thread će proveravati na svako trajanje da li su se parametri promenili.
+       Ako su promenjeni SF komandom, sledeća iteracija će ih pokupiti. */
+    k_msleep((uint32_t)dur_s * 1000U);
+
+    /* Izračunavanje sledeće vrednosti */
+    if (dir > 0) {
+        if (cur < end) {
+            cur += 1;
+        } else {
+            cur = start; /* wrap na start */
+        }
+    } else { /* dir < 0 */
+        if (cur > end) {
+            cur -= 1;
+        } else {
+            cur = start; /* wrap na start (početak “down” sweepa) */
+        }
+    }
+
+    set_frequency_safe(cur);
+    /* Ostatak se radi spavanjem u nit-funkciji */
+}
+
+/* Nit koja upravlja promenom frekvencije */
+static void freq_thread(void *a, void *b, void *c)
+{
+
+    printk("[FREQ] thread started\n");
+
+    while (1) {
+        /* Ako želiš da sweep radi samo kad je stimulacija ON: */
+        if (!stimulation_running) {
+            /* mirno spavaj i čekaj SON */
+            k_msleep(200);
+            continue;
+        }
+
+        /* Na svakoj iteraciji primeni logiku iznad; sweep_loop odradi jedan “korak” i spava */
+        if (!freq_sweep || freq_dur == 0) {
+            /* Constant: samo osveži vrednost i miruj */
+            set_frequency_safe(freq_start);
+            k_msleep(500);
+        } else {
+            /* Changing: jedan “step” + sleep na trajanje */
+            /* Ponovi dok god su uslovi aktivni (stimulation_running i sweep) */
+            uint8_t start = freq_start, end = freq_end, dur_s = freq_dur;
+            int dir = (start <= end) ? +1 : -1;
+            uint8_t cur = start;
+
+            while (stimulation_running && freq_sweep && freq_dur > 0) {
+                /* Ako su parametri promenjeni “u letu”, izađi iz unutrašnje petlje da ih re-load-uješ */
+                if (start != freq_start || end != freq_end || dur_s != freq_dur) {
+                    printk("[FREQ] params changed on the fly: reload\n");
+                    break;
+                }
+
+                set_frequency_safe(cur);
+
+                /* Spavaj trajanje */
+                k_msleep((uint32_t)dur_s * 1000U);
+
+                /* Sledeći korak */
+                if (dir > 0) {
+                    if (cur < end) cur += 1;
+                    else           cur = start; /* wrap */
+                } else {
+                    if (cur > end) cur -= 1;
+                    else           cur = start; /* wrap */
+                }
+            }
+        }
+    }
+}
+
+/* Kreiraj nit (auto-start) */
+K_THREAD_DEFINE(freq_thread_id,
+                FREQ_THREAD_STACK_SIZE,
+                freq_thread,
+                NULL, NULL, NULL,
+                FREQ_THREAD_PRIO, 0, 0);

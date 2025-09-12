@@ -4,6 +4,17 @@
         "math.h": "c",
         "hrs.h": "c",
         "rsens.h": "c",
-        "kernel.h": "c"
+        "kernel.h": "c",
+        "array": "c",
+        "concepts": "c",
+        "string": "c",
+        "unordered_map": "c",
+        "memory": "c",
+        "string_view": "c",
+        "ostream": "c",
+        "streambuf": "c",
+        "functional": "c",
+        "tuple": "c",
+        "compare": "c"
     }
 }
