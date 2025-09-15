@@ -623,6 +623,7 @@ static void process_command(const uint8_t *data, uint16_t len)
             freq_end       = end_v;
             freq_dur       = 0;
             freq_sweep     = false;
+            freq_control_stop();
             printk("[CMD] SF applied: CONSTANT %u Hz\n", start_v);
             send_response(">OK<");
             return;
@@ -638,6 +639,8 @@ static void process_command(const uint8_t *data, uint16_t len)
             freq_end   = end_v;
             freq_dur   = dur_v;
             freq_sweep = true;
+                        freq_control_start();
+
             printk("[CMD] SF applied: RANGE %u..%u Hz, dur=%u s\n", start_v, end_v, dur_v);
             send_response(">OK<");
             return;
@@ -706,11 +709,11 @@ static void process_command(const uint8_t *data, uint16_t len)
         return;
     }
 
-    /* === SA: 8 bajtova HEX – upiši u aktivni pattern kao 8 vrednosti === */
-    if (strcmp(cmd, "SA") == 0) {
-        if (arg_len != 8) {
-            printk("[CMD] SA rejected: arg_len=%u (expected 8)\n", (unsigned)arg_len);
-            send_response("ERR: need exactly 8 values\n");
+    /* === SA: 16 bajtova HEX – upiši u aktivni pattern kao 8 vrednosti === */
+    else if (strcmp(cmd, "SA") == 0) {
+        if (arg_len != 16) {
+            printk("[CMD] SA rejected: arg_len=%u (expected 16)\n", (unsigned)arg_len);
+            send_response("ERR: need exactly 16 bytes\n");
             return;
         }
         if (number_patter >= patterns_count) {
@@ -719,14 +722,31 @@ static void process_command(const uint8_t *data, uint16_t len)
             send_response("ERR: invalid active pattern\n");
             return;
         }
+
         for (int i = 0; i < 8; ++i) {
-            /* Ako je pulse_patterns[][] tipa uint16_t, mapiramo bajt->u16 */
-            pulse_patterns[number_patter][i] = (uint16_t)arg_ptr[i];
+            /* Objedini 2 bajta u jedan uint16_t */
+            uint16_t raw = ((uint16_t)arg_ptr[2*i] << 8) | arg_ptr[2*i + 1];
+
+            pulse_patterns[number_patter][i] = raw;
+
+            printk("[CMD] SA ch%d=0x%04X\n", i, raw);
         }
+
         printk("[CMD] SA applied to pattern #%u\n", (unsigned)number_patter);
-        send_response("OK: SA stored\n");
+
+        /* Odgovor preko BLE sa HEX vrednostima */
+        char out[128];
+        size_t pos = 0;
+        pos += snprintk(out + pos, sizeof(out) - pos, ">SA;");
+        for (int i = 0; i < 8; ++i) {
+            pos += snprintk(out + pos, sizeof(out) - pos, "0x%04X ", pulse_patterns[number_patter][i]);
+        }
+        pos += snprintk(out + pos, sizeof(out) - pos, "<\r\n");
+
+        send_response(out);
         return;
     }
+
 
     else if (strcmp(cmd, "XC") == 0) {
         if (arg_len != 16) {
@@ -786,9 +806,8 @@ static void process_command(const uint8_t *data, uint16_t len)
 
 
 
-
-
-
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(freq_sweep, LOG_LEVEL_INF);
 
 

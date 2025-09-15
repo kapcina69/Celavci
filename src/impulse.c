@@ -264,13 +264,13 @@ static void impulse_thread(void *a, void *b, void *c)
     (void)mux_write(&stim_mux_config, tx_buffer_1, sizeof(tx_buffer_1));
 
     number_of_pulses = 0;
+    uint32_t T_intra_us          = hz_to_us(frequency_of_impulses);                              // period između pulseva
 
     send_response("IMP: ready\r\n");
 
     while (s_impulse_running) {
         const uint32_t phase_us      = (uint32_t)STIMULATION_PULSE_WIDTH_US * (uint32_t)pulse_width; // 1 faza
         const uint32_t one_pulse_us  = 2U * phase_us;                                                // ANODE + CATHODE + PAUSE
-        uint32_t T_intra_us          = hz_to_us(frequency_of_impulses);                              // period između pulseva
         uint32_t T_block_us          = hz_to_us(frequency);                                          // period između grupa (8)
 
         /* pattern & prvi MUX za grupu */
@@ -374,3 +374,4 @@ void stop_pulse_sequence(void)
     /* Ako ručno zaustavljamo, sprovedi isto što i posle timera */
     stop_pulse_sequence_internal(false);
 }
+
