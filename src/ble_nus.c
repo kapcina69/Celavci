@@ -405,6 +405,166 @@ static void send_kv_raw2(const char hdr2[2], const uint8_t *payload, size_t plen
 }
 
 
+#include <zephyr/kernel.h>
+#include <zephyr/sys/printk.h>
+
+static uint8_t max_freq_for_pw(uint16_t pw_us, uint8_t frequency_default)
+{
+    uint8_t candidate = frequency_default;
+
+    if (pw_us >= 1000) {
+        candidate = 64;
+        printk("[max_freq_for_pw] pw=%u us >=1000 -> cand=%u Hz\n", pw_us, candidate);
+    }
+    else if (pw_us >= 950) {
+        candidate = 67;
+        printk("[max_freq_for_pw] pw=%u us >=950 -> cand=%u Hz\n", pw_us, candidate);
+    }
+    else if (pw_us >= 900) {
+        candidate = 68;
+        printk("[max_freq_for_pw] pw=%u us >=900 -> cand=%u Hz\n", pw_us, candidate);
+    }
+    else if (pw_us >= 850) {
+        candidate = 71;
+        printk("[max_freq_for_pw] pw=%u us >=850 -> cand=%u Hz\n", pw_us, candidate);
+    }
+    else if (pw_us >= 800) {
+        candidate = 72;
+        printk("[max_freq_for_pw] pw=%u us >=800 -> cand=%u Hz\n", pw_us, candidate);
+    }
+    else if (pw_us >= 750) {
+        candidate = 75;
+        printk("[max_freq_for_pw] pw=%u us >=750 -> cand=%u Hz\n", pw_us, candidate);
+    }
+    else if (pw_us >= 700) {
+        candidate = 77;
+        printk("[max_freq_for_pw] pw=%u us >=700 -> cand=%u Hz\n", pw_us, candidate);
+    }
+    else if (pw_us >= 650) {
+        candidate = 81;
+        printk("[max_freq_for_pw] pw=%u us >=650 -> cand=%u Hz\n", pw_us, candidate);
+    }
+    else if (pw_us >= 600) {
+        candidate = 82;
+        printk("[max_freq_for_pw] pw=%u us >=600 -> cand=%u Hz\n", pw_us, candidate);
+    }
+    else if (pw_us >= 550) {
+        candidate = 85;
+        printk("[max_freq_for_pw] pw=%u us >=550 -> cand=%u Hz\n", pw_us, candidate);
+    }
+    else if (pw_us >= 500) {
+        candidate = 89;
+        printk("[max_freq_for_pw] pw=%u us >=500 -> cand=%u Hz\n", pw_us, candidate);
+    }
+    else if (pw_us >= 450) {
+        candidate = 93;
+        printk("[max_freq_for_pw] pw=%u us >=450 -> cand=%u Hz\n", pw_us, candidate);
+    }
+    else if (pw_us >= 400) {
+        candidate = 97;
+        printk("[max_freq_for_pw] pw=%u us >=400 -> cand=%u Hz\n", pw_us, candidate);
+    }
+    else if(pw_us >= 350) {
+        candidate = 99;
+        printk("[max_freq_for_pw] pw=%u us >=399 -> cand=100 Hz\n", pw_us);
+    }
+    else {
+        candidate = frequency_default; /* <400 µs → 1–100 Hz dozvoljeno */
+        printk("[max_freq_for_pw] pw=%u us <400 -> cand=default=%u Hz\n", pw_us, candidate);
+    }
+
+    /* Vraćamo samo ako je kandidat manji od default-a */
+    if (candidate < frequency_default) {
+        printk("[max_freq_for_pw] USING candidate=%u Hz (default=%u)\n", candidate, frequency_default);
+        return candidate;
+    } else {
+        printk("[max_freq_for_pw] KEEPING default=%u Hz (candidate=%u)\n", frequency_default, candidate);
+        return frequency_default;
+    }
+}
+
+
+
+static uint16_t min_pw_for_freq(uint8_t freq_hz, uint16_t default_pw_us)
+{
+    uint16_t candidate = default_pw_us;
+
+    if (freq_hz <= 64) {
+        candidate = 1000;
+        printk("[min_pw_for_freq] freq=%u Hz <=66 -> cand=1000 us\n", freq_hz);
+    }
+    else if (freq_hz <= 67) {
+        candidate = 950;
+        printk("[min_pw_for_freq] freq=%u Hz <=69 -> cand=950 us\n", freq_hz);
+    }
+    else if (freq_hz <= 68) {
+        candidate = 900;
+        printk("[min_pw_for_freq] freq=%u Hz <=70 -> cand=900 us\n", freq_hz);
+    }
+    else if (freq_hz <= 71) {
+        candidate = 850;
+        printk("[min_pw_for_freq] freq=%u Hz <=73 -> cand=850 us\n", freq_hz);
+    }
+    else if (freq_hz <= 72) {
+        candidate = 800;
+        printk("[min_pw_for_freq] freq=%u Hz <=74 -> cand=800 us\n", freq_hz);
+    }
+    else if (freq_hz <= 75) {
+        candidate = 750;
+        printk("[min_pw_for_freq] freq=%u Hz <=77 -> cand=750 us\n", freq_hz);
+    }
+    else if (freq_hz <= 77) {
+        candidate = 700;
+        printk("[min_pw_for_freq] freq=%u Hz <=79 -> cand=700 us\n", freq_hz);
+    }
+    else if (freq_hz <= 81) {
+        candidate = 650;
+        printk("[min_pw_for_freq] freq=%u Hz <=83 -> cand=650 us\n", freq_hz);
+    }
+    else if (freq_hz <= 82) {
+        candidate = 600;
+        printk("[min_pw_for_freq] freq=%u Hz <=84 -> cand=600 us\n", freq_hz);
+    }
+    else if (freq_hz <= 85) {
+        candidate = 550;
+        printk("[min_pw_for_freq] freq=%u Hz <=88 -> cand=550 us\n", freq_hz);
+    }
+    else if (freq_hz <= 89) {
+        candidate = 500;
+        printk("[min_pw_for_freq] freq=%u Hz <=91 -> cand=500 us\n", freq_hz);
+    }
+    else if (freq_hz <= 93) {
+        candidate = 450;
+        printk("[min_pw_for_freq] freq=%u Hz <=95 -> cand=450 us\n", freq_hz);
+    }
+    else if (freq_hz <= 97) {
+        candidate = 400;
+        printk("[min_pw_for_freq] freq=%u Hz <=98 -> cand=400 us\n", freq_hz);
+    }
+    else if(freq_hz <= 99) {
+        candidate = 350;
+        printk("[min_pw_for_freq] freq=%u Hz <=100 -> cand=350 us (<400 zone)\n", freq_hz);
+    }
+    else if (freq_hz <= 100) {
+        candidate = 399;
+        printk("[min_pw_for_freq] freq=%u Hz <=100 -> cand=399 us (<400 zone)\n", freq_hz);
+    }
+    else {
+        candidate = default_pw_us;
+        printk("[min_pw_for_freq] freq=%u Hz >100 -> cand=default %u us\n", freq_hz, default_pw_us);
+    }
+
+    /* Vraćamo samo ako je kandidat manji od default-a */
+    if (candidate < default_pw_us) {
+        printk("[min_pw_for_freq] USING candidate=%u us (default=%u)\n", candidate, default_pw_us);
+        return candidate;
+    } else {
+        printk("[min_pw_for_freq] KEEPING default=%u us (candidate=%u)\n", default_pw_us, candidate);
+        return default_pw_us;
+    }
+}
+
+
 
 
 
@@ -597,8 +757,8 @@ static void process_command(const uint8_t *data, uint16_t len)
             send_response(">ERR<");
             return;
         }
-        uint8_t start_v = arg_ptr[0];
-        uint8_t end_v   = arg_ptr[1];
+        uint8_t start_v = max_freq_for_pw(pulse_width*20,arg_ptr[0]); //*20 zbog deljenja u pw komandi
+        uint8_t end_v   = max_freq_for_pw(pulse_width*20,arg_ptr[1]);
         uint8_t dur_v   = arg_ptr[2];
         frequency = start_v;  // default
         printk("[CMD] SF RAW(3): start=%u, end=%u, dur=%u\n", start_v, end_v, dur_v);
@@ -659,8 +819,10 @@ static void process_command(const uint8_t *data, uint16_t len)
         printk("[CMD] PW RAW(2): %u\n", v);
 
         if (v >= 50 && v <= 1000) {
-            pulse_width = v/20;
-            printk("[CMD] PW applied: %u\n", v);
+            /* Validacija u odnosu na frekvenciju */
+            uint16_t min_pw = min_pw_for_freq(frequency, v);
+            pulse_width = min_pw/20;
+            printk("[CMD] PW applied: %u\n", min_pw);
             send_response(">OK<");
         } else {
             printk("[CMD] PW rejected: out-of-range %u\n", v);
@@ -899,4 +1061,66 @@ void freq_control_stop(void)
 {
     k_timer_stop(&freq_timer);
     cur_freq = 0;
+}
+
+
+
+
+/**
+ * @brief Validira i postavlja novu frekvenciju i širinu impulsa.
+ *
+ * @param freq_hz       Tražena frekvencija [Hz]
+ * @param pulse_width_us Širina impulsa [µs]
+ * @return int  0 = OK, -EINVAL = van granica
+ */
+int set_freq_and_pw(uint8_t freq_hz, uint16_t pulse_width_us)
+{
+    /* Tabela maksimalnih frekvencija po širini impulsa */
+    struct {
+        uint16_t pw_us;
+        uint8_t  max_hz;
+    } limits[] = {
+        {1000, 66},
+        { 950, 69},
+        { 900, 70},
+        { 850, 73},
+        { 800, 74},
+        { 750, 77},
+        { 700, 79},
+        { 650, 83},
+        { 600, 84},
+        { 550, 88},
+        { 500, 91},
+        { 450, 95},
+        { 400, 98},
+    };
+
+    uint8_t allowed_max = 100;
+
+    if (pulse_width_us >= 1000) {
+        allowed_max = 66;
+    } else if (pulse_width_us < 400) {
+        allowed_max = 100; /* 1–100 dozvoljeno */
+    } else {
+        for (int i = 0; i < ARRAY_SIZE(limits); i++) {
+            if (pulse_width_us >= limits[i].pw_us) {
+                allowed_max = limits[i].max_hz;
+                break;
+            }
+        }
+    }
+
+    if (freq_hz > allowed_max) {
+        LOG_ERR("[FREQ] REJECT: freq=%u Hz, pw=%u us (max=%u Hz)",
+                freq_hz, pulse_width_us, allowed_max);
+        return -EINVAL;
+    }
+
+    /* Ako je sve u redu -> upiši globalne promenljive */
+    frequency     = freq_hz;
+    pulse_width   = pulse_width_us;
+    new_frequency = 1;
+
+    LOG_INF("[FREQ] ACCEPT: freq=%u Hz, pw=%u us", freq_hz, pulse_width_us);
+    return 0;
 }
