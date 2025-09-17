@@ -6,6 +6,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
+
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,6 +18,19 @@
 
 #define PATTERN_LEN   8
 #define MAX_PATTERNS  16
+
+volatile uint8_t amplitude = 100;
+uint8_t frequency = 20;
+uint8_t pulse_width = 25;
+uint8_t temperature = 38;
+uint8_t stim_state = 0;
+
+uint8_t new_frequency = 0;
+uint8_t freq_start = 0;
+uint8_t freq_end = 0;
+uint8_t freq_dur =0;
+bool freq_sweep;
+
 
 /* Globalne promenljive iz impulse.c */
 extern uint16_t pulse_patterns[MAX_PATTERNS][PATTERN_LEN];
@@ -59,32 +73,6 @@ static bool parse_hex16(const char *tok, uint16_t *out)
 }
 
 
-
-
-
-
-// --- Callback when receive data from NUS ---
-// static void nus_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
-// {
-//     printk("Received BLE message:\n");
-
-//     printk("  HEX: ");
-//     for (uint16_t i = 0; i < len; i++) {
-//         printk("%02X ", data[i]);
-//     }
-
-//     printk("\n  ASCII: ");
-//     for (uint16_t i = 0; i < len; i++) {
-//         if (data[i] >= 32 && data[i] <= 126) {
-//             printk("%c", data[i]);
-//         } else {
-//             printk(".");
-//         }
-//     }
-//     printk("\n");
-
-//     process_command(data, len);
-// }
 
 
 // Callback za aplikaciju
@@ -194,6 +182,8 @@ static void nus_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len
 
     process_command(data, len);
 }
+
+
 
 /* --- Konekcioni parametri (stabilniji protiv reason 0x08) --- */
 static const struct bt_le_conn_param desired_param = {
@@ -351,17 +341,8 @@ void send_response(const char *msg)
 }
 
 
-volatile uint8_t amplitude = 100;
-uint8_t frequency = 20;
-uint8_t pulse_width = 25;
-uint8_t temperature = 38;
-uint8_t stim_state = 0;
 
-uint8_t new_frequency = 0;
-uint8_t freq_start = 0;
-uint8_t freq_end = 0;
-uint8_t freq_dur =0;
-bool freq_sweep;
+
 
 /**
  * @brief Pošalji BLE poruku u formatu >XX;...< sa binarnim payload-om
@@ -405,9 +386,8 @@ static void send_kv_raw2(const char hdr2[2], const uint8_t *payload, size_t plen
 }
 
 
-#include <zephyr/kernel.h>
-#include <zephyr/sys/printk.h>
 
+// Odredi maksimalnu frekvenciju za zadatu širinu impulsa
 static uint8_t max_freq_for_pw(uint16_t pw_us, uint8_t frequency_default)
 {
     uint8_t candidate = frequency_default;
@@ -473,7 +453,6 @@ static uint8_t max_freq_for_pw(uint16_t pw_us, uint8_t frequency_default)
         printk("[max_freq_for_pw] pw=%u us <400 -> cand=default=%u Hz\n", pw_us, candidate);
     }
 
-    /* Vraćamo samo ako je kandidat manji od default-a */
     if (candidate < frequency_default) {
         printk("[max_freq_for_pw] USING candidate=%u Hz (default=%u)\n", candidate, frequency_default);
         return candidate;
@@ -484,7 +463,7 @@ static uint8_t max_freq_for_pw(uint16_t pw_us, uint8_t frequency_default)
 }
 
 
-
+// Odredi minimalnu širinu impulsa za zadatu frekvenciju
 static uint16_t min_pw_for_freq(uint8_t freq_hz, uint16_t default_pw_us)
 {
     uint16_t candidate = default_pw_us;
@@ -554,7 +533,6 @@ static uint16_t min_pw_for_freq(uint8_t freq_hz, uint16_t default_pw_us)
         printk("[min_pw_for_freq] freq=%u Hz >100 -> cand=default %u us\n", freq_hz, default_pw_us);
     }
 
-    /* Vraćamo samo ako je kandidat manji od default-a */
     if (candidate < default_pw_us) {
         printk("[min_pw_for_freq] USING candidate=%u us (default=%u)\n", candidate, default_pw_us);
         return candidate;
@@ -571,6 +549,18 @@ static uint16_t min_pw_for_freq(uint8_t freq_hz, uint16_t default_pw_us)
 // process command za aplikaciju
 void freq_control_start(void);
 void freq_control_stop(void);
+
+/* Vrati pokazivač na POSLEDNJI '<' u [buf, buf+len) ili NULL ako nema */
+static const uint8_t *find_last_lt(const uint8_t *buf, size_t len)
+{
+    if (!buf || len == 0) return NULL;
+    for (ssize_t i = (ssize_t)len - 1; i >= 0; --i) {
+        if (buf[i] == '<') return &buf[i];
+    }
+    return NULL;
+}
+
+
 
 static void process_command(const uint8_t *data, uint16_t len)
 {
@@ -591,6 +581,10 @@ static void process_command(const uint8_t *data, uint16_t len)
         send_response(">ERR;BAD_CMD<\r\n");
         return;
     }
+    
+    
+        
+    
 
     char cmd[4] = {0};
     memcpy(cmd, cmd_start, cmd_len);
@@ -751,17 +745,49 @@ static void process_command(const uint8_t *data, uint16_t len)
     printk("[CMD] Arg len=%u\n", (unsigned)arg_len);
 
     /* === SF: uvek 3 bajta HEX: start(Hz), end(Hz), dur(s) === */
+ /* === SF: Set Frequency (CONSTANT ili RANGE) ================================
+ * Formati (svi argumenti su HEX bajtovi):
+ *   >SF;VV<              -> CONSTANT, frekvencija = VV Hz
+ *   >SF;VV WW DD<        -> RANGE, od VV..WW Hz, menjaj na svakih DD sekundi
+ *
+ * Napomena:
+ * - VV, WW i DD su HEX vrednosti (0x01..0x64 za 1..100 Hz).
+ * - Dozvoljeno je da VV ili WW bude 0x3C (60 Hz) jer parser uzima POSLEDNJI '<'.
+ */
     if (strcmp(cmd, "SF") == 0) {
-        if (arg_len != 3) {
-            printk("[CMD] SF rejected: arg_len=%u (expected 3)\n", (unsigned)arg_len);
+        /* Tražimo POSLEDNJI '<' u okviru celog frame-a */
+        const uint8_t *frame_end = NULL;
+        for (ssize_t i = len - 1; i >= 0; --i) {
+            if (data[i] == '<') {
+                frame_end = &data[i];
+                break;
+            }
+        }
+        if (!frame_end || frame_end <= arg_ptr) {
+            printk("[CMD] SF rejected: bad frame end\n");
             send_response(">ERR<");
             return;
         }
-        uint8_t start_v = max_freq_for_pw(pulse_width*20,arg_ptr[0]); //*20 zbog deljenja u pw komandi
-        uint8_t end_v   = max_freq_for_pw(pulse_width*20,arg_ptr[1]);
-        uint8_t dur_v   = arg_ptr[2];
+        size_t arg_len2 = (size_t)(frame_end - arg_ptr);
+
+        if (!(arg_len2 == 1 || arg_len2 == 3)) {
+            printk("[CMD] SF rejected: arg_len=%u (expected 1 or 3)\n", (unsigned)arg_len2);
+            send_response(">ERR<");
+            return;
+        }
+
+        uint8_t start_in = arg_ptr[0];
+        uint8_t end_in   = (arg_len2 == 3) ? arg_ptr[1] : arg_ptr[0];
+        uint8_t dur_in   = (arg_len2 == 3) ? arg_ptr[2] : 0;
+
+        /* Mapiranje kroz PW */
+        uint8_t start_v = max_freq_for_pw(pulse_width * 20, start_in);
+        uint8_t end_v   = max_freq_for_pw(pulse_width * 20, end_in);
+        uint8_t dur_v   = dur_in;
+
         frequency = start_v;  // default
-        printk("[CMD] SF RAW(3): start=%u, end=%u, dur=%u\n", start_v, end_v, dur_v);
+        printk("[CMD] SF RAW: start_in=%u end_in=%u dur_in=%u -> mapped start=%u end=%u dur=%u\n",
+            start_in, end_in, dur_in, start_v, end_v, dur_v);
 
         /* Validacija opsega 1..100 Hz */
         if (start_v < 1 || start_v > 100 || end_v < 1 || end_v > 100) {
@@ -787,9 +813,8 @@ static void process_command(const uint8_t *data, uint16_t len)
             printk("[CMD] SF applied: CONSTANT %u Hz\n", start_v);
             send_response(">OK<");
             return;
-        } 
-        else {
-            /* RANGE MODE, zahtevamo start<=end (po potrebi dozvoli i obrnuto) */
+        } else {
+            /* RANGE MODE */
             if (start_v > end_v) {
                 printk("[CMD] SF rejected: start(%u) > end(%u)\n", start_v, end_v);
                 send_response(">ERR<");
@@ -799,13 +824,14 @@ static void process_command(const uint8_t *data, uint16_t len)
             freq_end   = end_v;
             freq_dur   = dur_v;
             freq_sweep = true;
-                        freq_control_start();
+            freq_control_start();
 
             printk("[CMD] SF applied: RANGE %u..%u Hz, dur=%u s\n", start_v, end_v, dur_v);
             send_response(">OK<");
             return;
         }
     }
+
 
     /* === PW: 2 bajta HEX (16-bit big-endian), opseg 50..1000 === */
     if (strcmp(cmd, "PW") == 0) {
@@ -852,15 +878,18 @@ static void process_command(const uint8_t *data, uint16_t len)
         return;
     }
 
-    /* === ST: 1 bajt HEX – trajanje u sekundama (1..255) === */
+    /* === ST: 2 bajta HEX – trajanje u sekundama (MSB, LSB) === */
     if (strcmp(cmd, "ST") == 0) {
-        if (arg_len != 1) {
-            printk("[CMD] ST rejected: arg_len=%u (expected 1)\n", (unsigned)arg_len);
+        if (arg_len != 2) {
+            printk("[CMD] ST rejected: arg_len=%u (expected 2)\n", (unsigned)arg_len);
             send_response(">ST;ERR<\r\n");
             return;
         }
-        uint8_t sec = arg_ptr[0];
-        if (sec >= 1 /*&& sec <= 255*/) {
+
+        /* Sastavi 16-bitni broj iz dva bajta */
+        uint16_t sec = ((uint16_t)arg_ptr[0] << 8) | (uint16_t)arg_ptr[1];
+
+        if (sec >= 1 && sec <= 65535) {
             stim_duration_s = (uint32_t)sec;
             printk("[CMD] ST applied: %u s\n", sec);
             send_response(">ST;OK<\r\n");
@@ -870,6 +899,7 @@ static void process_command(const uint8_t *data, uint16_t len)
         }
         return;
     }
+
 
     /* === SA: 16 bajtova HEX – upiši u aktivni pattern kao 8 vrednosti === */
     else if (strcmp(cmd, "SA") == 0) {
@@ -1018,7 +1048,6 @@ static void freq_work_handler(struct k_work *work)
     if (!freq_sweep || dur_s == 0) {
         /* CONSTANT MODE */
         set_frequency_safe(start);
-        /* Ne menjamo ništa dalje */
         return;
     }
 
@@ -1052,7 +1081,7 @@ void freq_control_start(void)
         /* Constant: odmah setuj frekvenciju */
         set_frequency_safe(freq_start);
     } else {
-        /* Sweep: pokreni tajmer */
+        /* Spokreni tajmer */
         k_timer_start(&freq_timer, K_NO_WAIT, K_NO_WAIT);
     }
 }
