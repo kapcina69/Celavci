@@ -62,7 +62,7 @@ void pwm_ch0_start(void)
     if (!ch0_ready) { printk("PWM0 not ready\n"); return; }
 
     const uint32_t freq_hz   = 10000; /* 10 kHz */
-    const uint8_t  duty_pc   = 40;    /* 40% */
+    const uint8_t  duty_pc   = 80;    /* 40% */
 
     /* Idempotentno: već radi sa istim parametrima */
     if (ch0_running && ch0_freq_hz == freq_hz && ch0_duty_pc == duty_pc) {

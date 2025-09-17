@@ -164,7 +164,7 @@ void main(void)
     pwm_ch0_start();  /* PWM0/CH0 → P0.31, 10 kHz @ 40% (definisano u pwm.c) */
     // pwm_ch1_start();  /* PWM1/CH0 → P0.28, 8 kHz @ 1%   (definisano u pwm.c) */
 
-    k_sleep(K_SECONDS(5));
+    k_sleep(K_SECONDS(1));
 
     pwm_ch0_stop();
     // pwm_ch1_stop();

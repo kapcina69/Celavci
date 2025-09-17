@@ -15,6 +15,7 @@
 #include "ble_nus.h"
 #include "dac.h"
 #include "impulse.h"
+#include "pwm.h"
 
 #define PATTERN_LEN   8
 #define MAX_PATTERNS  16
@@ -596,6 +597,9 @@ static void process_command(const uint8_t *data, uint16_t len)
         if (strcmp(cmd, "SON") == 0) {
             if (!stimulation_running) {
                 stimulation_running = true;
+                pwm_ch0_start();
+                k_msleep(400); 
+                pwm_ch0_stop();
                 freq_control_start();
                 start_pulse_sequence();
                 printk("[CMD] SON -> start OK\n");
@@ -609,6 +613,9 @@ static void process_command(const uint8_t *data, uint16_t len)
         if (strcmp(cmd, "OFF") == 0) {
             if (stimulation_running) {
                 stimulation_running = false;
+                pwm_ch0_start();
+                k_msleep(400);
+                pwm_ch0_stop();
                 freq_control_stop();
                 stop_pulse_sequence();
                 printk("[CMD] OFF -> stop OK\n");
