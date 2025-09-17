@@ -12,7 +12,6 @@ static const struct i2c_dt_spec bq = I2C_DT_SPEC_GET(DT_NODELABEL(fuelgauge));
 #define BQ_REG_AVG_CURRENT     0x0C
 #define BQ_REG_STATE_OF_CHARGE 0x2C
 
-/* ===== NOVO: period slanja (u sekundama) ===== */
 #define FG_REPORT_PERIOD_SEC   10
 
 static inline void bq_tbuf_delay(void) { k_busy_wait(70); }
@@ -22,11 +21,10 @@ static int bq_read_u16(uint8_t reg, uint16_t *out)
     uint8_t buf[2];
     int ret = i2c_write_read_dt(&bq, &reg, 1, buf, 2);  // <-- robustnije
     if (ret) return ret;
-    *out = ((uint16_t)buf[1] << 8) | buf[0];            // LE
+    *out = ((uint16_t)buf[1] << 8) | buf[0];            
     return 0;
 }
 
-/* PROVERENI način: pročitaj TAČNO 1 bajt sa 0x1C i tretiraj kao % */
 static int bq_read_soc_pct(uint8_t *pct_out)
 {
     uint8_t reg = BQ_REG_STATE_OF_CHARGE;
@@ -38,7 +36,6 @@ static int bq_read_soc_pct(uint8_t *pct_out)
     return 0;
 }
 
-/* (opciono) debug: pročitaj oba bajta SOC-a da vidimo šta stiže */
 static int bq_read_soc_raw_bytes(uint8_t *lsb, uint8_t *msb)
 {
     uint8_t reg = BQ_REG_STATE_OF_CHARGE;

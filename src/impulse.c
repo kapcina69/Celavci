@@ -1,10 +1,9 @@
-// impulse.c — stabilni pulsevi u posebnoj niti (irq_lock + k_busy_wait), bez k_work
-
 #include "impulse.h"
 #include "ble_nus.h"
 #include "mux.h"
 #include "dac.h"
 #include "nrfx_adc.h"
+#include "pwm.h"
 
 #include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
@@ -25,7 +24,6 @@ const struct gpio_dt_spec pulse_cathode = GPIO_DT_SPEC_GET(PULSE_CATHODE_NODE, g
 const struct gpio_dt_spec pulse_anode   = GPIO_DT_SPEC_GET(PULSE_ANODE_NODE, gpios);
 const struct gpio_dt_spec dc_dc_en      = GPIO_DT_SPEC_GET(DC_DC_EN_NODE, gpios);
 
-/* === Globalno stanje (preuzeto iz tvog koda) === */
 uint8_t  number_of_pulses      = 0;
 uint32_t frequency_of_impulses = 5000;   // Hz
 volatile uint32_t stim_duration_s = 1800;  // 30 min
@@ -47,7 +45,6 @@ static bool     silent_probe_active  = false;
 static uint8_t  silent_count         = 0;
 static uint8_t  silent_mask          = 0;
 
-/* Širina jedinice u tvom izrazu: STIMULATION_PULSE_WIDTH_US * pulse_width */
 #ifndef STIMULATION_PULSE_WIDTH_US
 #define STIMULATION_PULSE_WIDTH_US 1
 #endif
@@ -314,7 +311,7 @@ static void impulse_thread(void *a, void *b, void *c)
     set_cathode(0);
 }
 
-/* === START/STOP – idempotentno === */
+/* === START/STOP === */
 static void stop_pulse_sequence_internal(bool from_timer)
 {
     /* Zaustavi glavnu petlju */
@@ -371,7 +368,8 @@ void stop_pulse_sequence(void)
         send_response("IMPULSE NOT INITED\r\n");
         return;
     }
-    /* Ako ručno zaustavljamo, sprovedi isto što i posle timera */
     stop_pulse_sequence_internal(false);
+    pwm_ch1_stop();
+
 }
 

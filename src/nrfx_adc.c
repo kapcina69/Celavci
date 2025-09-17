@@ -9,6 +9,7 @@ LOG_MODULE_REGISTER(SAADC_1SHOT, LOG_LEVEL_INF);
 #include <helpers/nrfx_gppi.h>
 #include <hal/nrf_gpio.h>
 #include "nrfx_adc.h"
+#include "pwm.h"
 #include "ble_nus.h"
 #if defined(DPPI_PRESENT)
 #include <nrfx_dppi.h>
@@ -133,7 +134,6 @@ static void saadc_evt(nrfx_saadc_evt_t const *e)
     switch (e->type) {
 
     case NRFX_SAADC_EVT_DONE: {
-        /* === TVOJA POSTOJEĆA LOGIKA ZA DONE (ne diram suštinu) === */
         int16_t s = *((int16_t *)e->data.done.p_buffer);
         if (s < 0) s = 0;  /* single-ended: saturiši negativno */
         g_has_last     = true;
@@ -148,8 +148,15 @@ static void saadc_evt(nrfx_saadc_evt_t const *e)
 
         if (over_new != g_over_state) {
             g_over_state = over_new;
-            if (g_over_state) { NRF_P0->OUTSET = OUT_PIN_MASK; }
-            else              { NRF_P0->OUTCLR = OUT_PIN_MASK; }
+            if (g_over_state) {
+                /* Ispod praga -> Uključi PWM kanal 1 */
+               pwm_ch1_stop();
+            } else {
+                /* Iznad praga -> Isključi PWM kanal 1 */
+                 pwm_ch1_start();
+            }
+
+
         }
 
         /* Akumulacija maske povorke */
@@ -175,25 +182,19 @@ static void saadc_evt(nrfx_saadc_evt_t const *e)
     }
 
     case NRFX_SAADC_EVT_BUF_REQ:
-        /* Jednokratni 1-shot: već smo postavili buffer pre triggera.
-           Nema novog bafera – samo zabeleži i ignoriši. */
         LOG_DBG("saadc_evt: %s (ignore for 1-shot)", evt_name(e->type));
         break;
 
     case NRFX_SAADC_EVT_READY:
-        /* Periferija spremna (posle init/kalibracije) – informativno. */
         LOG_DBG("saadc_evt: %s", evt_name(e->type));
         break;
 
     case NRFX_SAADC_EVT_CALIBRATEDONE:
-        /* Ako budeš radio offset kalibraciju povremeno – ovde možeš da
-           označiš da je kalibracija gotova. */
         LOG_DBG("saadc_evt: %s", evt_name(e->type));
         break;
 
     case NRFX_SAADC_EVT_LIMIT:
-        /* Imali bismo LIMIT samo ako postaviš SAADC limit registre
-           (mi koristimo svoju soft histerezu, pa ovo nije aktivno). */
+
         LOG_DBG("saadc_evt: %s", evt_name(e->type));
         break;
 
@@ -324,8 +325,7 @@ static void saadc_maint_work(struct k_work *work)
                 (long)atomic_get(&g_abort_streak));
     }
 
-    /* 2) NEMA više “reinit svaki ciklus” – to je pravilo BUSY spam.
-          Reinit samo ako je abort streak dovoljno velik. */
+
 
     if (atomic_get(&g_abort_streak) >= SAADC_ABORT_STREAK_REINIT) {
         LOG_WRN("maint: abort streak >= %d -> forced reinit", SAADC_ABORT_STREAK_REINIT);
@@ -345,10 +345,7 @@ static void saadc_maint_work(struct k_work *work)
 
 int saadc_ppi_oneshot_init(void)
 {
-    /* P0.x kao izlaz (default low) */
-    nrf_gpio_cfg_output(OUT_PIN);
-    NRF_P0->OUTCLR = OUT_PIN_MASK;
-    LOG_INF("OUT pin init: P0.%u = LOW", OUT_PIN);
+    
 
     if (!g_irq_connected) {
         IRQ_CONNECT(DT_IRQN(DT_NODELABEL(adc)),
@@ -371,15 +368,14 @@ int saadc_ppi_oneshot_init(void)
     k_work_schedule(&g_saadc_maint, K_MSEC(SAADC_MAINT_PERIOD_MS));
     LOG_INF("maint scheduled in %u ms", (unsigned)SAADC_MAINT_PERIOD_MS);
 
-    LOG_INF("SAADC 1-shot OK: T=%umV (+/-%umV), codes HI=%u LO=%u, P0.%u out",
-            THRESHOLD_MV, THRESHOLD_HYST_MV, g_thresh_code_hi, g_thresh_code_lo, OUT_PIN);
+    LOG_INF("SAADC 1-shot OK: T=%umV (+/-%umV), codes HI=%u LO=%u, PWM CH1 kontrola",
+            THRESHOLD_MV, THRESHOLD_HYST_MV, g_thresh_code_hi, g_thresh_code_lo);
     return 0;
 }
 
 /* Trigger jedne konverzije; bez agresivnog reinit-a (to radi maint po potrebi) */
 int saadc_trigger_once_ppi(void)
 {
-    /* 1) Brz watchdog u triggeru – odglavi ako je zapelo */
     uint32_t now = k_uptime_get_32();
     if (g_in_progress && g_cycle_start_ms != 0 &&
         (int32_t)(now - g_cycle_start_ms) > (int32_t)SAADC_CYCLE_TIMEOUT_MS) {
@@ -406,7 +402,6 @@ int saadc_trigger_once_ppi(void)
     g_in_progress = true;
     g_has_last    = false;
 
-    /* 3) Buffer pa trigger — OVDE je tipično pucalo kad je redosled bio loš */
     nrfx_err_t err = nrfx_saadc_buffer_set((int16_t *)&g_sample, 1);
     if (err != NRFX_SUCCESS) {
         g_in_progress = false;
