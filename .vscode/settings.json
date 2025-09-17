@@ -15,6 +15,7 @@
         "streambuf": "c",
         "functional": "c",
         "tuple": "c",
-        "compare": "c"
+        "compare": "c",
+        "fuel_gauge.h": "c"
     }
 }

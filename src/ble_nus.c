@@ -16,6 +16,7 @@
 #include "dac.h"
 #include "impulse.h"
 #include "pwm.h"
+#include "fuel_gauge.h"
 
 #define PATTERN_LEN   8
 #define MAX_PATTERNS  16
@@ -526,7 +527,7 @@ static uint16_t min_pw_for_freq(uint8_t freq_hz, uint16_t default_pw_us)
         printk("[min_pw_for_freq] freq=%u Hz <=100 -> cand=350 us (<400 zone)\n", freq_hz);
     }
     else if (freq_hz <= 100) {
-        candidate = 399;
+        candidate = 300;
         printk("[min_pw_for_freq] freq=%u Hz <=100 -> cand=399 us (<400 zone)\n", freq_hz);
     }
     else {
@@ -638,19 +639,27 @@ static void process_command(const uint8_t *data, uint16_t len)
             return;
         }
         if (strcmp(cmd, "RSC") == 0) {
-            uint16_t soc = 0;
-            int ret = fuel_gauge_get_soc(&soc);
-            if (ret == 0) {
-                char resp[16];
-                snprintk(resp, sizeof(resp), ">RSC;%u<", soc);
-                printk(">RSC;%u<", soc);
-                send_response(resp);
-            } else {
-                printk("[CMD] RSC -> fuel_gauge_get_soc ERR=%d\n", ret);
-                send_response(">RSCERR<");
-            }
-            return;
-        }
+    uint16_t soc_raw = 0;
+    int ret = fuel_gauge_get_soc(&soc_raw);
+    if (ret == 0) {
+        /* Pretvaramo procenat u ASCII znak (primer: 52% -> '4') */
+        uint8_t ascii_char = (uint8_t)(soc_raw & 0xFF);
+        char resp[16];
+        snprintk(resp, sizeof(resp), ">RSC;%c<", ascii_char);
+        printk(">RSC;%c<\n", ascii_char);
+        send_response(resp);
+
+        printk("fuel_gauge_get_soc: %u%% -> ASCII '%c' (0x%02X)\n",
+               soc_raw, ascii_char, ascii_char);
+    } else {
+        printk("[CMD] RSC -> fuel_gauge_get_soc ERR=%d\n", ret);
+        send_response(">RSCERR<");
+    }
+    return;
+}
+
+
+
         if (strcmp(cmd, "RSS") == 0) {
                 /* 1) SON/OFF – bez payload-a */
                 if (stimulation_running) {

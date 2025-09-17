@@ -100,6 +100,7 @@ int fuel_gauge_get_soc(uint16_t *soc)
     if (ret) return ret;
 
     *soc = raw;   // već u procentima (0–100)
+    printk("fuel_gauge_get_soc: raw=0x%04X -> %u %%\n", raw, (unsigned)*soc);
     return 0;
 }
 
