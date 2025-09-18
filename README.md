@@ -285,4 +285,3 @@ JLinkRTTLogger -Device NRF52840_XXAA -If SWD -Speed 4000 -RTTChannel 0
 **Verzija**: v1.0
 **Datum**: 18.09.2025.  
 **Platform**: nRF52840 + Zephyr RTOS
-**Status**: Production Ready
