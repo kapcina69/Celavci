@@ -16,6 +16,8 @@
         "functional": "c",
         "tuple": "c",
         "compare": "c",
-        "fuel_gauge.h": "c"
+        "fuel_gauge.h": "c",
+        "pwm.h": "c",
+        "log.h": "c"
     }
 }

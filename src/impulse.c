@@ -153,14 +153,22 @@ void report_last_burst(void)
 {
     uint8_t mask;
     if (saadc_get_last_burst(&mask)) {
-        /* npr. pošalji preko BLE u formatu RCE;xx (hex) */
-        char msg[16];
-        snprintk(msg, sizeof(msg), "RCE;%02X", mask);
-        send_response(msg);
+        char send_buff[8];
+        send_buff[0] = '>';
+        send_buff[1] = 'R';
+        send_buff[2] = 'C';
+        send_buff[3] = 'E';
+        send_buff[4] = ';';
+        send_buff[5] = mask;   // direktno ubaci masku kao 1 bajt
+        send_buff[6] = '<';
+        send_buff[7] = '\0';
+
+        bt_nus_send(NULL, send_buff, 8);
     } else {
-        send_response("RCE;NA");   /* još nema kompletne povorke */
+        bt_nus_send(NULL, ">RCE;NA<", sizeof(">RCE;NA<"));
     }
 }
+
 
 /* === Jedan puls (3 faze) === */
 static inline void do_one_pulse_us(uint32_t width_us, uint8_t pair_idx)

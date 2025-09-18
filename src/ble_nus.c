@@ -3,9 +3,7 @@
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
 #include <bluetooth/services/nus.h>
-#include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
-
 
 #include <ctype.h>
 #include <stdlib.h>
@@ -18,8 +16,21 @@
 #include "pwm.h"
 #include "fuel_gauge.h"
 
+LOG_MODULE_REGISTER(ble_nus, LOG_LEVEL_INF);
+
+/* ============================================================================
+ * DEFINITIONS AND CONSTANTS
+ * ============================================================================ */
+
 #define PATTERN_LEN   8
 #define MAX_PATTERNS  16
+
+#define OK_MSG  "OK\n"
+#define ERR_MSG "ERR\n"
+
+/* ============================================================================
+ * GLOBAL VARIABLES
+ * ============================================================================ */
 
 volatile uint8_t amplitude = 100;
 uint8_t frequency = 20;
@@ -30,164 +41,22 @@ uint8_t stim_state = 0;
 uint8_t new_frequency = 0;
 uint8_t freq_start = 0;
 uint8_t freq_end = 0;
-uint8_t freq_dur =0;
+uint8_t freq_dur = 0;
 bool freq_sweep;
 
-
-/* Globalne promenljive iz impulse.c */
+/* External global variables from impulse.c */
 extern uint16_t pulse_patterns[MAX_PATTERNS][PATTERN_LEN];
 extern volatile size_t patterns_count;
 extern volatile size_t number_patter;
 
 uint8_t RCE = 0;
-
-
 bool stimulation_running = false;
 
-static bool is_dec_uint(const char *s) {
-    if (!s || !*s) return false;
-    while (*s) {
-        if (!isdigit((unsigned char)*s)) return false;
-        s++;
-    }
-    return true;
-}
+/* ============================================================================
+ * CONNECTION MANAGEMENT
+ * ============================================================================ */
 
-
-
-/* Helper: parsiraj heks token u uint16_t (dozvoljen prefiks 0x) */
-static bool parse_hex16(const char *tok, uint16_t *out)
-{
-    if (!tok || !out) return false;
-    while (*tok && isspace((unsigned char)*tok)) tok++;   // preskoči beline
-
-    unsigned long v = 0;
-    if ((tok[0] == '0') && (tok[1] == 'x' || tok[1] == 'X')) {
-        tok += 2;
-    }
-
-    char *endp = NULL;
-    v = strtoul(tok, &endp, 16);
-    if (endp == tok)    return false;     // nema cifara
-    if (v > 0xFFFFUL)   return false;     // izvan 16-bit
-    *out = (uint16_t)v;
-    return true;
-}
-
-
-
-
-// Callback za aplikaciju
-
-// --- Callback when receive data from NUS ---
-static void nus_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
-{
-    printk("Received BLE message:\n");
-
-    /* HEX prikaz */
-    printk("  HEX: ");
-    for (uint16_t i = 0; i < len; i++) {
-        printk("%02X ", data[i]);
-    }
-    printk("\n");
-
-    /* ASCII prikaz sa specijalnim karakterima */
-    printk("  ASCII: ");
-    for (uint16_t i = 0; i < len; i++) {
-        uint8_t c = data[i];
-        
-        // Prikaz specijalnih karaktera koji se koriste u komandama
-        if (c == '>') {
-            printk(">");
-        } else if (c == '<') {
-            printk("<");
-        } else if (c == ';') {
-            printk(";");
-        } else if (c == '\r') {
-            printk("\\r");
-        } else if (c == '\n') {
-            printk("\\n");
-        } else if (c == '\t') {
-            printk("\\t");
-        } else if (c >= 32 && c <= 126) {
-            printk("%c", (char)c);
-        } else {
-            printk("."); // Neštampajući karakteri
-        }
-    }
-    printk("\n");
-
-    // Proveri da li je komanda u formatu >XX;...<
-    if (len >= 5 && data[0] == '>' && data[len-1] == '<') {
-        printk("  Format: Valid command structure\n");
-        
-        // Pronađi ; u komandi
-        const uint8_t *semicolon = memchr(data, ';', len);
-        if (semicolon && semicolon > data && semicolon < data + len - 1) {
-            // Izdvoji komandu (između > i ;)
-            uint8_t cmd_len = semicolon - data - 1;
-            if (cmd_len > 0 && cmd_len <= 3) {
-                char cmd[4] = {0};
-                memcpy(cmd, data + 1, cmd_len);
-                printk("  Command: %s\n", cmd);
-            }
-            
-            // Izdvoji argumente (između ; i <) - mogu biti binarni
-            uint8_t arg_len = (data + len - 1) - semicolon - 1;
-            if (arg_len > 0) {
-                printk("  Arguments (hex): ");
-                for (uint8_t i = 0; i < arg_len; i++) {
-                    printk("%02X ", semicolon[1 + i]);
-                }
-                printk("\n");
-                
-                // Konvertuj binarnu vrednost u decimalnu (BIG-ENDIAN)
-                uint32_t decimal_value = 0;
-                
-                if (arg_len == 2) {
-                    // 16-bitna vrednost (BIG-ENDIAN: prvi bajt je MSB, drugi je LSB)
-                    decimal_value = (semicolon[1] << 8) | semicolon[2];
-                    printk("  Decimal value: %lu\n", decimal_value);
-                }
-                else if (arg_len == 1) {
-                    // 8-bitna vrednost
-                    decimal_value = semicolon[1];
-                    printk("  Decimal value: %lu\n", decimal_value);
-                }
-                else if (arg_len == 4) {
-                    // 32-bitna vrednost (BIG-ENDIAN)
-                    decimal_value = (semicolon[1] << 24) | (semicolon[2] << 16) | 
-                                   (semicolon[3] << 8) | semicolon[4];
-                    printk("  Decimal value: %lu\n", decimal_value);
-                }
-                else {
-                    // Tekstualni argumenti
-                    char args[128] = {0};
-                    if (arg_len < sizeof(args) - 1) {
-                        memcpy(args, semicolon + 1, arg_len);
-                        args[arg_len] = '\0';
-                        printk("  Text arguments: %s\n", args);
-                        
-                        // Pokušaj da konvertuješ tekstualne brojeve
-                        char *endptr;
-                        long text_value = strtol(args, &endptr, 0);
-                        if (endptr != args) {
-                            printk("  Text numeric value: %ld\n", text_value);
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        printk("  Format: Invalid command structure\n");
-    }
-
-    process_command(data, len);
-}
-
-
-
-/* --- Konekcioni parametri (stabilniji protiv reason 0x08) --- */
+/* Connection parameters to prevent timeout (reason 0x08) */
 static const struct bt_le_conn_param desired_param = {
     .interval_min = 24,   /* 30 ms */
     .interval_max = 40,   /* 50 ms */
@@ -196,200 +65,15 @@ static const struct bt_le_conn_param desired_param = {
 };
 
 static struct bt_conn *current_conn;
-
-static void request_conn_param(struct k_work *work)
-{
-    ARG_UNUSED(work);
-    if (!current_conn) return;
-
-    int err = bt_conn_le_param_update(current_conn, &desired_param);
-    if (err) {
-        printk("bt_conn_le_param_update err=%d, retry in 3s\n", err);
-        /* ako central odbije, probaj opet kasnije */
-        static struct k_work_delayable *self;
-        self = CONTAINER_OF(work, struct k_work_delayable, work);
-        k_work_reschedule(self, K_SECONDS(3));
-    } else {
-        printk("Conn param update requested\n");
-    }
-}
-
-/* Odloženi rad za traženje parametara posle povezivanja */
-static K_WORK_DELAYABLE_DEFINE(conn_param_work, request_conn_param);
-
-/* --- Deklaracije funkcija (ostaju) --- */
-void bt_ready(int err);
-void connected(struct bt_conn *conn, uint8_t err);
-void disconnected(struct bt_conn *conn, uint8_t reason);
-
-/* --- LED (led1 alias) --- */
 static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 
-/* --- BT events --- */
-void connected(struct bt_conn *conn, uint8_t err)
-{
-    if (err) {
-        printk("BLE connection failed (err %u)\n", err);
-        return;
-    }
-
-    /* Zapamti konekciju za NUS TX */
-    current_conn = bt_conn_ref(conn);
-
-    /* Info o trenutnim parametrima */
-    struct bt_conn_info info;
-    if (!bt_conn_get_info(conn, &info) && info.type == BT_CONN_TYPE_LE) {
-        printk("BLE connected: interval=%u*1.25ms latency=%u timeout=%u*10ms\n",
-               info.le.interval, info.le.latency, info.le.timeout);
-    } else {
-        printk("BLE connected\n");
-    }
-
-    /* LED ON */
-    gpio_pin_set_dt(&led1, 1);
-
-    /* Posle kratkog kašnjenja zatraži „zdravije” parametre */
-    k_work_schedule(&conn_param_work, K_SECONDS(2));
-}
-
-void disconnected(struct bt_conn *conn, uint8_t reason)
-{
-    printk("BLE disconnected (reason 0x%02X)\n", reason);
-    /* 0x08 = Connection Timeout */
-
-    /* LED OFF */
-    gpio_pin_set_dt(&led1, 0);
-
-    /* Oslobodi i počisti state */
-    if (current_conn) {
-        bt_conn_unref(current_conn);
-        current_conn = NULL;
-    }
-    k_work_cancel_delayable(&conn_param_work);
-}
-
-static struct bt_conn_cb conn_callbacks = {
-    .connected = connected,
-    .disconnected = disconnected,
-};
-
-static struct bt_nus_cb nus_callbacks = {
-    .received = nus_cb,
-};
-
-void bt_ready(int err)
-{
-    if (err) {
-        printk("Bluetooth was not started successfully (err %d)\n", err);
-        return;
-    }
-
-    printk("Bluetooth ready, starting advertising...\n");
-
-    err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, NULL, 0, NULL, 0);
-    if (err) {
-        printk("Advertising not started (err %d)\n", err);
-    } else {
-        printk("BLE advertising active\n");
-    }
-}
-
-int ble_nus_init(void)
-{
-    int err;
-
-    err = bt_enable(bt_ready);
-    if (err) {
-        printk("Bluetooth enable failed (err %d)\n", err);
-        return err;
-    }
-
-    if (!device_is_ready(led1.port)) {
-        printk("LED1 device not ready\n");
-        return -ENODEV;
-    }
-    /* Pravilno konfiguriši LED kao izlaz i ugasi je */
-    err = gpio_pin_configure_dt(&led1, GPIO_OUTPUT_INACTIVE);
-    if (err) {
-        printk("LED1 config failed (err %d)\n", err);
-        return err;
-    }
-
-    bt_conn_cb_register(&conn_callbacks);
-
-    err = bt_nus_init(&nus_callbacks);
-    if (err) {
-        printk("NUS service not initialized (err %d)\n", err);
-        return err;
-    }
-
-    return 0;
-}
-
-/* --- Slanje odgovora preko NUS-a (koristi aktivnu konekciju) --- */
-#define OK_MSG  "OK\n"
-#define ERR_MSG "ERR\n"
-
-void send_response(const char *msg)
-{
-    if (!current_conn || !msg) {
-        printk("NUS TX skipped (no conn or msg=NULL)\n");
-        return;
-    }
-    int err = bt_nus_send(current_conn, (const uint8_t *)msg, strlen(msg));
-    if (err) {
-        printk("bt_nus_send err=%d\n", err);
-    }
-}
 
 
+/* ============================================================================
+ * FREQUENCY AND PULSE WIDTH VALIDATION
+ * ============================================================================ */
 
-
-
-/**
- * @brief Pošalji BLE poruku u formatu >XX;...< sa binarnim payload-om
- *
- * Primer:
- *   send_kv_raw2("PW", (uint8_t[]){0x01, 0xF4}, 2);
- *   -> šalje: 3E 50 57 3B 01 F4 3C   (ASCII ">PW;" + payload + "<")
- *
- * @param hdr2    Dva karaktera komande (npr. "PW", "SF", "XC")
- * @param payload Pokazivač na bajtove payload-a (može NULL ako plen=0)
- * @param plen    Broj bajtova payload-a
- */
-static void send_kv_raw2(const char hdr2[2], const uint8_t *payload, size_t plen)
-{
-    uint8_t buf[64];
-    size_t i = 0;
-
-    buf[i++] = '>';
-    buf[i++] = (uint8_t)hdr2[0];
-    buf[i++] = (uint8_t)hdr2[1];
-    buf[i++] = ';';
-
-    if (payload && plen) {
-        memcpy(&buf[i], payload, plen);
-        i += plen;
-    }
-
-    buf[i++] = '<';
-
-    /* slanje preko BLE NUS-a */
-    int ret = bt_nus_send(NULL, buf, i);
-    if (ret) {
-        printk("[TX][ERR] bt_nus_send failed (%d)\n", ret);
-    } else {
-        printk("[TX] Sent %zu bytes: ", i);
-        for (size_t k = 0; k < i; k++) {
-            printk("%02X ", buf[k]);
-        }
-        printk("\n");
-    }
-}
-
-
-
-// Odredi maksimalnu frekvenciju za zadatu širinu impulsa
+/* Determine maximum frequency for given pulse width */
 static uint8_t max_freq_for_pw(uint16_t pw_us, uint8_t frequency_default)
 {
     uint8_t candidate = frequency_default;
@@ -451,7 +135,7 @@ static uint8_t max_freq_for_pw(uint16_t pw_us, uint8_t frequency_default)
         printk("[max_freq_for_pw] pw=%u us >=399 -> cand=100 Hz\n", pw_us);
     }
     else {
-        candidate = frequency_default; /* <400 µs → 1–100 Hz dozvoljeno */
+        candidate = frequency_default; /* <400 µs → 1-100 Hz allowed */
         printk("[max_freq_for_pw] pw=%u us <400 -> cand=default=%u Hz\n", pw_us, candidate);
     }
 
@@ -464,8 +148,7 @@ static uint8_t max_freq_for_pw(uint16_t pw_us, uint8_t frequency_default)
     }
 }
 
-
-// Odredi minimalnu širinu impulsa za zadatu frekvenciju
+/* Determine minimum pulse width for given frequency */
 static uint16_t min_pw_for_freq(uint8_t freq_hz, uint16_t default_pw_us)
 {
     uint16_t candidate = default_pw_us;
@@ -544,57 +227,265 @@ static uint16_t min_pw_for_freq(uint8_t freq_hz, uint16_t default_pw_us)
     }
 }
 
-
-
-
-
-// process command za aplikaciju
-void freq_control_start(void);
-void freq_control_stop(void);
-
-/* Vrati pokazivač na POSLEDNJI '<' u [buf, buf+len) ili NULL ako nema */
-static const uint8_t *find_last_lt(const uint8_t *buf, size_t len)
+/**
+ * @brief Validates and sets new frequency and pulse width.
+ *
+ * @param freq_hz       Requested frequency [Hz]
+ * @param pulse_width_us Pulse width [µs]
+ * @return int  0 = OK, -EINVAL = out of bounds
+ */
+int set_freq_and_pw(uint8_t freq_hz, uint16_t pulse_width_us)
 {
-    if (!buf || len == 0) return NULL;
-    for (ssize_t i = (ssize_t)len - 1; i >= 0; --i) {
-        if (buf[i] == '<') return &buf[i];
+    /* Maximum frequency limits by pulse width table */
+    struct {
+        uint16_t pw_us;
+        uint8_t  max_hz;
+    } limits[] = {
+        {1000, 66},
+        { 950, 69},
+        { 900, 70},
+        { 850, 73},
+        { 800, 74},
+        { 750, 77},
+        { 700, 79},
+        { 650, 83},
+        { 600, 84},
+        { 550, 88},
+        { 500, 91},
+        { 450, 95},
+        { 400, 98},
+    };
+
+    uint8_t allowed_max = 100;
+
+    if (pulse_width_us >= 1000) {
+        allowed_max = 66;
+    } else if (pulse_width_us < 400) {
+        allowed_max = 100; /* 1-100 allowed */
+    } else {
+        for (int i = 0; i < ARRAY_SIZE(limits); i++) {
+            if (pulse_width_us >= limits[i].pw_us) {
+                allowed_max = limits[i].max_hz;
+                break;
+            }
+        }
     }
-    return NULL;
+
+    if (freq_hz > allowed_max) {
+        printk("FREQ REJECT: freq=%u Hz, pw=%u us (max=%u Hz)\n",
+                freq_hz, pulse_width_us, allowed_max);
+        return -EINVAL;
+    }
+
+    /* If everything is OK -> write to global variables */
+    frequency     = freq_hz;
+    pulse_width   = pulse_width_us;
+    new_frequency = 1;
+
+    printk("FREQ ACCEPT: freq=%u Hz, pw=%u us\n", freq_hz, pulse_width_us);
+    return 0;
 }
 
+/* ============================================================================
+ * BLE COMMUNICATION FUNCTIONS
+ * ============================================================================ */
 
+/* Send response via NUS (uses active connection) */
+void send_response(const char *msg)
+{
+    if (!current_conn || !msg) {
+        printk("NUS TX skipped (no conn or msg=NULL)\n");
+        return;
+    }
+    int err = bt_nus_send(current_conn, (const uint8_t *)msg, strlen(msg));
+    if (err) {
+        printk("bt_nus_send err=%d\n", err);
+    }
+}
 
+/**
+ * @brief Send BLE message in format >XX;...< with binary payload
+ *
+ * Example:
+ *   send_kv_raw2("PW", (uint8_t[]){0x01, 0xF4}, 2);
+ *   -> sends: 3E 50 57 3B 01 F4 3C   (ASCII ">PW;" + payload + "<")
+ *
+ * @param hdr2    Two command characters (e.g. "PW", "SF", "XC")
+ * @param payload Pointer to payload bytes (can be NULL if plen=0)
+ * @param plen    Number of payload bytes
+ */
+static void send_kv_raw2(const char hdr2[2], const uint8_t *payload, size_t plen)
+{
+    uint8_t buf[64];
+    size_t i = 0;
+
+    buf[i++] = '>';
+    buf[i++] = (uint8_t)hdr2[0];
+    buf[i++] = (uint8_t)hdr2[1];
+    buf[i++] = ';';
+
+    if (payload && plen) {
+        memcpy(&buf[i], payload, plen);
+        i += plen;
+    }
+
+    buf[i++] = '<';
+
+    /* Send via BLE NUS */
+    int ret = bt_nus_send(NULL, buf, i);
+    if (ret) {
+        printk("[TX][ERR] bt_nus_send failed (%d)\n", ret);
+    } else {
+        printk("[TX] Sent %zu bytes: ", i);
+        for (size_t k = 0; k < i; k++) {
+            printk("%02X ", buf[k]);
+        }
+        printk("\n");
+    }
+}
+
+/* ============================================================================
+ * BLE MESSAGE PROCESSING AND COMMAND HANDLING
+ * ============================================================================ */
+
+/* NUS callback when receiving data */
+static void nus_cb(struct bt_conn *conn, const uint8_t *const data, uint16_t len)
+{
+    printk("Received BLE message:\n");
+
+    /* HEX display */
+    printk("  HEX: ");
+    for (uint16_t i = 0; i < len; i++) {
+        printk("%02X ", data[i]);
+    }
+    printk("\n");
+
+    /* ASCII display with special characters */
+    printk("  ASCII: ");
+    for (uint16_t i = 0; i < len; i++) {
+        uint8_t c = data[i];
+        
+        /* Display special characters used in commands */
+        if (c == '>') {
+            printk(">");
+        } else if (c == '<') {
+            printk("<");
+        } else if (c == ';') {
+            printk(";");
+        } else if (c == '\r') {
+            printk("\\r");
+        } else if (c == '\n') {
+            printk("\\n");
+        } else if (c == '\t') {
+            printk("\\t");
+        } else if (c >= 32 && c <= 126) {
+            printk("%c", (char)c);
+        } else {
+            printk("."); /* Non-printable characters */
+        }
+    }
+    printk("\n");
+
+    /* Check if command is in format >XX;..< */
+    if (len >= 5 && data[0] == '>' && data[len-1] == '<') {
+        printk("  Format: Valid command structure\n");
+        
+        /* Find ; in command */
+        const uint8_t *semicolon = memchr(data, ';', len);
+        if (semicolon && semicolon > data && semicolon < data + len - 1) {
+            /* Extract command (between > and ;) */
+            uint8_t cmd_len = semicolon - data - 1;
+            if (cmd_len > 0 && cmd_len <= 3) {
+                char cmd[4] = {0};
+                memcpy(cmd, data + 1, cmd_len);
+                printk("  Command: %s\n", cmd);
+            }
+            
+            /* Extract arguments (between ; and <) - can be binary */
+            uint8_t arg_len = (data + len - 1) - semicolon - 1;
+            if (arg_len > 0) {
+                printk("  Arguments (hex): ");
+                for (uint8_t i = 0; i < arg_len; i++) {
+                    printk("%02X ", semicolon[1 + i]);
+                }
+                printk("\n");
+                
+                /* Convert binary value to decimal (BIG-ENDIAN) */
+                uint32_t decimal_value = 0;
+                
+                if (arg_len == 2) {
+                    /* 16-bit value (BIG-ENDIAN: first byte is MSB, second is LSB) */
+                    decimal_value = (semicolon[1] << 8) | semicolon[2];
+                    printk("  Decimal value: %lu\n", decimal_value);
+                }
+                else if (arg_len == 1) {
+                    /* 8-bit value */
+                    decimal_value = semicolon[1];
+                    printk("  Decimal value: %lu\n", decimal_value);
+                }
+                else if (arg_len == 4) {
+                    /* 32-bit value (BIG-ENDIAN) */
+                    decimal_value = (semicolon[1] << 24) | (semicolon[2] << 16) | 
+                                   (semicolon[3] << 8) | semicolon[4];
+                    printk("  Decimal value: %lu\n", decimal_value);
+                }
+                else {
+                    /* Text arguments */
+                    char args[128] = {0};
+                    if (arg_len < sizeof(args) - 1) {
+                        memcpy(args, semicolon + 1, arg_len);
+                        args[arg_len] = '\0';
+                        printk("  Text arguments: %s\n", args);
+                        
+                        /* Try to convert text numbers */
+                        char *endptr;
+                        long text_value = strtol(args, &endptr, 0);
+                        if (endptr != args) {
+                            printk("  Text numeric value: %ld\n", text_value);
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        printk("  Format: Invalid command structure\n");
+    }
+
+    process_command(data, len);
+}
+
+/* Process received command */
 static void process_command(const uint8_t *data, uint16_t len)
 {
-    /* 0) Validacija okvira i pronalazak granica */
+    /* Frame validation and boundary finding */
     if (!data || len < 3 || data[0] != '>' || data[len-1] != '<') {
         printk("[CMD] Bad frame: missing '>'/'<' (len=%u)\n", len);
         send_response(">ERR;BAD_FRAME<\r\n");
         return;
     }
 
-    /* 1) Nađi ';' (ako ga ima) i izvuci CMD (2–3 slova) */
+    /* Find ';' (if exists) and extract CMD (2-3 letters) */
     const uint8_t *semicolon = memchr(data, ';', len);
     const uint8_t *cmd_start = data + 1;
     const uint8_t *cmd_end   = (semicolon ? semicolon : (data + len - 1));
     size_t cmd_len = (cmd_end > cmd_start) ? (size_t)(cmd_end - cmd_start) : 0;
+    
     if (cmd_len == 0 || cmd_len > 3) {
         printk("[CMD] BAD_CMD: cmd_len=%u\n", (unsigned)cmd_len);
         send_response(">ERR;BAD_CMD<\r\n");
         return;
     }
-    
-    
-        
-    
 
     char cmd[4] = {0};
     memcpy(cmd, cmd_start, cmd_len);
-    for (size_t i = 0; i < cmd_len; i++) cmd[i] = (char)toupper((unsigned char)cmd[i]);
+    for (size_t i = 0; i < cmd_len; i++) {
+        cmd[i] = (char)toupper((unsigned char)cmd[i]);
+    }
     printk("[CMD] Command='%s'\n", cmd);
 
-    /* 2) Bez-arg komande (čisto ASCII) */
+    /* Handle commands without arguments (pure ASCII) */
     if (!semicolon) {
+        /* SON - Start stimulation */
         if (strcmp(cmd, "SON") == 0) {
             if (!stimulation_running) {
                 stimulation_running = true;
@@ -611,6 +502,8 @@ static void process_command(const uint8_t *data, uint16_t len)
             }
             return;
         }
+        
+        /* OFF - Stop stimulation */
         if (strcmp(cmd, "OFF") == 0) {
             if (stimulation_running) {
                 stimulation_running = false;
@@ -627,6 +520,8 @@ static void process_command(const uint8_t *data, uint16_t len)
             }
             return;
         }
+        
+        /* RCE - Remote Contact Enable */
         if (strcmp(cmd, "RCE") == 0) {
             if (RCE == 0) {
                 RCE = 1;
@@ -638,117 +533,118 @@ static void process_command(const uint8_t *data, uint16_t len)
             }
             return;
         }
+        
+        /* RSC - Read State of Charge */
         if (strcmp(cmd, "RSC") == 0) {
-    uint16_t soc_raw = 0;
-    int ret = fuel_gauge_get_soc(&soc_raw);
-    if (ret == 0) {
-        /* Pretvaramo procenat u ASCII znak (primer: 52% -> '4') */
-        uint8_t ascii_char = (uint8_t)(soc_raw & 0xFF);
-        char resp[16];
-        snprintk(resp, sizeof(resp), ">RSC;%c<", ascii_char);
-        printk(">RSC;%c<\n", ascii_char);
-        send_response(resp);
+            uint16_t soc_raw = 0;
+            int ret = fuel_gauge_get_soc(&soc_raw);
+            if (ret == 0) {
+                /* Convert percentage to ASCII character (example: 52% -> '4') */
+                uint8_t ascii_char = (uint8_t)(soc_raw & 0xFF);
+                char resp[16];
+                snprintk(resp, sizeof(resp), ">RSC;%c<", ascii_char);
+                printk(">RSC;%c<\n", ascii_char);
+                send_response(resp);
 
-        printk("fuel_gauge_get_soc: %u%% -> ASCII '%c' (0x%02X)\n",
-               soc_raw, ascii_char, ascii_char);
-    } else {
-        printk("[CMD] RSC -> fuel_gauge_get_soc ERR=%d\n", ret);
-        send_response(">RSCERR<");
-    }
-    return;
-}
+                printk("fuel_gauge_get_soc: %u%% -> ASCII '%c' (0x%02X)\n",
+                       soc_raw, ascii_char, ascii_char);
+            } else {
+                printk("[CMD] RSC -> fuel_gauge_get_soc ERR=%d\n", ret);
+                send_response(">RSCERR<");
+            }
+            return;
+        }
 
-
-
+        /* RSS - Read System Status */
         if (strcmp(cmd, "RSS") == 0) {
-                /* 1) SON/OFF – bez payload-a */
-                if (stimulation_running) {
-                    printk("[CMD] RSS -> SON\n");
-                    send_response(">SON<\r\n");   /* ostaje čisti ASCII bez payload-a */
-                } else {
-                    printk("[CMD] RSS -> OFF\n");
-                    send_response(">OFF<\r\n");
-                }
-
-                /* 2) SA; 8 bajtova (aktivni pattern kao 8 vrednosti/bajtova) */
-                if (number_patter < patterns_count) {
-                    uint8_t sa_payload[8];
-                    for (int i = 0; i < 8; ++i) {
-                        /* ako su ti patterni uint16_t, ovde uzimaš npr. low byte */
-                        uint16_t v = pulse_patterns[number_patter][i];
-                        sa_payload[i] = (uint8_t)(v & 0xFF);
-                    }
-                    printk("[CMD] RSS -> SA for pattern #%u\n", (unsigned)number_patter);
-                    send_kv_raw2("SA", sa_payload, sizeof(sa_payload));
-                } else {
-                    printk("[CMD] RSS -> SA ERR (pattern idx=%u >= count=%u)\n",
-                        (unsigned)number_patter, (unsigned)patterns_count);
-                    send_response(">SA;ERR<\r\n");
-                }
-
-                /* 3) SF; 3 bajta: start, end, dur (po novom protokolu) */
-                {
-                    uint8_t sf_payload[3];
-                    /* constant: dur=0 i start==end; range: dur>0 */
-                    sf_payload[0] = freq_start;
-                    sf_payload[1] = freq_end;
-                    sf_payload[2] = freq_dur;  /* sekunde (ili kako si definisao) */
-                    printk("[CMD] RSS -> SF start=%u end=%u dur=%u\n",
-                        sf_payload[0], sf_payload[1], sf_payload[2]);
-                    send_kv_raw2("SF", sf_payload, sizeof(sf_payload));
-                }
-
-                /* 4) PW; 2 bajta (big-endian, 50..1000) */
-                {
-                    uint16_t pw = pulse_width; /* napomena: pulse_width mora biti uint16_t */
-                    uint8_t pw_payload[2] = { (uint8_t)(pw >> 8), (uint8_t)(pw & 0xFF) };
-                    printk("[CMD] RSS -> PW=%u\n", pw);
-                    send_kv_raw2("PW", pw_payload, sizeof(pw_payload));
-                }
-
-                /* 5) ST; 1 bajt (trajanje u sekundama po novom pravilu) */
-                {
-                    uint8_t st_payload = (stim_duration_s > 255) ? 255 : (uint8_t)stim_duration_s;
-                    printk("[CMD] RSS -> ST=%u s\n", st_payload);
-                    send_kv_raw2("ST", &st_payload, 1);
-                }
-
-                /* 6) RSC; 2 bajta (raw hex iz fuel_gauge_get_soc) */
-                {
-                    uint16_t soc_raw = 0;
-                    int ret = fuel_gauge_get_soc(&soc_raw);
-                    if (ret == 0) {
-                        uint8_t rsc_payload[2] = { (uint8_t)(soc_raw >> 8), (uint8_t)(soc_raw & 0xFF) };
-                        printk("[CMD] RSS -> RSC raw=0x%04X\n", soc_raw);
-                        send_kv_raw2("RSC", rsc_payload, sizeof(rsc_payload));
-                    } else {
-                        printk("[CMD] RSS -> RSC ERR=%d\n", ret);
-                        send_response(">RSCERR<\r\n");
-                    }
-                }
-
-                /* 7) RCE; 1 bajt (poslednja maska kontakata) */
-                {
-                    uint8_t mask = 0;
-                    extern bool saadc_get_last_burst(uint8_t *out_mask);
-                    if (saadc_get_last_burst(&mask)) {
-                        printk("[CMD] RSS -> RCE mask=0x%02X\n", mask);
-                        send_kv_raw2("RCE", &mask, 1);
-                    } else {
-                        send_response(">RCE;NA<\r\n");
-                    }
-                }
-
-                return;
+            /* 1) SON/OFF - without payload */
+            if (stimulation_running) {
+                printk("[CMD] RSS -> SON\n");
+                send_response(">SON<\r\n");   /* pure ASCII without payload */
+            } else {
+                printk("[CMD] RSS -> OFF\n");
+                send_response(">OFF<\r\n");
             }
 
+            /* 2) SA; 8 bytes (active pattern as 8 values/bytes) */
+            if (number_patter < patterns_count) {
+                uint8_t sa_payload[8];
+                for (int i = 0; i < 8; ++i) {
+                    /* if patterns are uint16_t, take low byte here */
+                    uint16_t v = pulse_patterns[number_patter][i];
+                    sa_payload[i] = (uint8_t)(v & 0xFF);
+                }
+                printk("[CMD] RSS -> SA for pattern #%u\n", (unsigned)number_patter);
+                send_kv_raw2("SA", sa_payload, sizeof(sa_payload));
+            } else {
+                printk("[CMD] RSS -> SA ERR (pattern idx=%u >= count=%u)\n",
+                    (unsigned)number_patter, (unsigned)patterns_count);
+                send_response(">SA;ERR<\r\n");
+            }
+
+            /* 3) SF; 3 bytes: start, end, dur (per new protocol) */
+            {
+                uint8_t sf_payload[3];
+                /* constant: dur=0 and start==end; range: dur>0 */
+                sf_payload[0] = freq_start;
+                sf_payload[1] = freq_end;
+                sf_payload[2] = freq_dur;  /* seconds (or as defined) */
+                printk("[CMD] RSS -> SF start=%u end=%u dur=%u\n",
+                    sf_payload[0], sf_payload[1], sf_payload[2]);
+                send_kv_raw2("SF", sf_payload, sizeof(sf_payload));
+            }
+
+            /* 4) PW; 2 bytes (big-endian, 50..1000) */
+            {
+                uint16_t pw = pulse_width; /* note: pulse_width must be uint16_t */
+                uint8_t pw_payload[2] = { (uint8_t)(pw >> 8), (uint8_t)(pw & 0xFF) };
+                printk("[CMD] RSS -> PW=%u\n", pw);
+                send_kv_raw2("PW", pw_payload, sizeof(pw_payload));
+            }
+
+            /* 5) ST; 1 byte (duration in seconds per new rule) */
+            {
+                uint8_t st_payload = (stim_duration_s > 255) ? 255 : (uint8_t)stim_duration_s;
+                printk("[CMD] RSS -> ST=%u s\n", st_payload);
+                send_kv_raw2("ST", &st_payload, 1);
+            }
+
+            /* 6) RSC; 2 bytes (raw hex from fuel_gauge_get_soc) */
+            {
+                
+                uint16_t soc_raw = 0;
+                int ret = fuel_gauge_get_soc(&soc_raw);
+                if (ret == 0) {
+                    /* Convert percentage to ASCII character (example: 52% -> '4') */
+                    uint8_t ascii_char = (uint8_t)(soc_raw & 0xFF);
+                    char resp[16];
+                    snprintk(resp, sizeof(resp), ">RSC;%c<", ascii_char);
+                    printk(">RSC;%c<\n", ascii_char);
+                    send_response(resp);
+
+                    printk("fuel_gauge_get_soc: %u%% -> ASCII '%c' (0x%02X)\n",
+                        soc_raw, ascii_char, ascii_char);
+                } else {
+                    printk("[CMD] RSC -> fuel_gauge_get_soc ERR=%d\n", ret);
+                    send_response(">RSCERR<");
+                }
+            
+            }
+
+            /* 7) RCE; 1 byte (last contact mask) */
+            {
+                report_last_burst();
+            }
+
+            return;
+        }
 
         printk("[CMD] Unknown no-arg command '%s'\n", cmd);
         send_response(">ERR;UNKNOWN<\r\n");
         return;
     }
 
-        /* 3) Argumenti: strogo između ';' i '<' (HEX bajtovi) */
+    /* Arguments: strictly between ';' and '<' (HEX bytes) */
     const uint8_t *lt_ptr = memchr(data, '<', len);
     if (!semicolon || !lt_ptr || semicolon >= lt_ptr) {
         printk("[CMD] BAD_FRAME: semicolon/lt mismatch\n");
@@ -757,21 +653,20 @@ static void process_command(const uint8_t *data, uint16_t len)
     }
 
     const uint8_t *arg_ptr = semicolon + 1;
-    uint16_t arg_len = (uint16_t)(lt_ptr - arg_ptr); /* '<' NE ulazi */
+    uint16_t arg_len = (uint16_t)(lt_ptr - arg_ptr); /* '<' does not count */
     printk("[CMD] Arg len=%u\n", (unsigned)arg_len);
 
-    /* === SF: uvek 3 bajta HEX: start(Hz), end(Hz), dur(s) === */
- /* === SF: Set Frequency (CONSTANT ili RANGE) ================================
- * Formati (svi argumenti su HEX bajtovi):
- *   >SF;VV<              -> CONSTANT, frekvencija = VV Hz
- *   >SF;VV WW DD<        -> RANGE, od VV..WW Hz, menjaj na svakih DD sekundi
- *
- * Napomena:
- * - VV, WW i DD su HEX vrednosti (0x01..0x64 za 1..100 Hz).
- * - Dozvoljeno je da VV ili WW bude 0x3C (60 Hz) jer parser uzima POSLEDNJI '<'.
- */
+    /* === SF: Set Frequency (CONSTANT or RANGE) ==============================
+     * Formats (all arguments are HEX bytes):
+     *   >SF;VV<              -> CONSTANT, frequency = VV Hz
+     *   >SF;VV WW DD<        -> RANGE, from VV..WW Hz, change every DD seconds
+     *
+     * Note:
+     * - VV, WW and DD are HEX values (0x01..0x64 for 1..100 Hz).
+     * - It's allowed for VV or WW to be 0x3C (60 Hz) because parser takes LAST '<'.
+     */
     if (strcmp(cmd, "SF") == 0) {
-        /* Tražimo POSLEDNJI '<' u okviru celog frame-a */
+        /* Look for LAST '<' within entire frame */
         const uint8_t *frame_end = NULL;
         for (ssize_t i = len - 1; i >= 0; --i) {
             if (data[i] == '<') {
@@ -796,7 +691,7 @@ static void process_command(const uint8_t *data, uint16_t len)
         uint8_t end_in   = (arg_len2 == 3) ? arg_ptr[1] : arg_ptr[0];
         uint8_t dur_in   = (arg_len2 == 3) ? arg_ptr[2] : 0;
 
-        /* Mapiranje kroz PW */
+        /* Mapping through PW */
         uint8_t start_v = max_freq_for_pw(pulse_width * 20, start_in);
         uint8_t end_v   = max_freq_for_pw(pulse_width * 20, end_in);
         uint8_t dur_v   = dur_in;
@@ -805,7 +700,7 @@ static void process_command(const uint8_t *data, uint16_t len)
         printk("[CMD] SF RAW: start_in=%u end_in=%u dur_in=%u -> mapped start=%u end=%u dur=%u\n",
             start_in, end_in, dur_in, start_v, end_v, dur_v);
 
-        /* Validacija opsega 1..100 Hz */
+        /* Validate range 1..100 Hz */
         if (start_v < 1 || start_v > 100 || end_v < 1 || end_v > 100) {
             printk("[CMD] SF rejected: out of range (start=%u, end=%u)\n", start_v, end_v);
             send_response(">ERR<");
@@ -848,8 +743,7 @@ static void process_command(const uint8_t *data, uint16_t len)
         }
     }
 
-
-    /* === PW: 2 bajta HEX (16-bit big-endian), opseg 50..1000 === */
+    /* === PW: 2 bytes HEX (16-bit big-endian), range 50..1000 === */
     if (strcmp(cmd, "PW") == 0) {
         if (arg_len != 2) {
             printk("[CMD] PW rejected: arg_len=%u (expected 2)\n", (unsigned)arg_len);
@@ -861,7 +755,7 @@ static void process_command(const uint8_t *data, uint16_t len)
         printk("[CMD] PW RAW(2): %u\n", v);
 
         if (v >= 50 && v <= 1000) {
-            /* Validacija u odnosu na frekvenciju */
+            /* Validation against frequency */
             uint16_t min_pw = min_pw_for_freq(frequency, v);
             pulse_width = min_pw/20;
             printk("[CMD] PW applied: %u\n", min_pw);
@@ -873,8 +767,7 @@ static void process_command(const uint8_t *data, uint16_t len)
         return;
     }
 
-
-    /* === SP: 1 bajt HEX – set active pattern index === */
+    /* === SP: 1 byte HEX — set active pattern index === */
     if (strcmp(cmd, "SP") == 0) {
         if (arg_len != 1) {
             printk("[CMD] SP rejected: arg_len=%u (expected 1)\n", (unsigned)arg_len);
@@ -885,7 +778,8 @@ static void process_command(const uint8_t *data, uint16_t len)
         if ((size_t)idx < patterns_count) {
             number_patter = (size_t)idx;
             printk("[CMD] SP applied: active pattern=%u\n", idx);
-            char ok[40]; snprintf(ok, sizeof(ok), "OK: active pattern=%u\n", idx);
+            char ok[40]; 
+            snprintf(ok, sizeof(ok), "OK: active pattern=%u\n", idx);
             send_response(ok);
         } else {
             printk("[CMD] SP rejected: idx=%u >= count=%u\n", idx, (unsigned)patterns_count);
@@ -894,7 +788,7 @@ static void process_command(const uint8_t *data, uint16_t len)
         return;
     }
 
-    /* === ST: 2 bajta HEX – trajanje u sekundama (MSB, LSB) === */
+    /* === ST: 2 bytes HEX — duration in seconds (MSB, LSB) === */
     if (strcmp(cmd, "ST") == 0) {
         if (arg_len != 2) {
             printk("[CMD] ST rejected: arg_len=%u (expected 2)\n", (unsigned)arg_len);
@@ -902,7 +796,7 @@ static void process_command(const uint8_t *data, uint16_t len)
             return;
         }
 
-        /* Sastavi 16-bitni broj iz dva bajta */
+        /* Compose 16-bit number from two bytes */
         uint16_t sec = ((uint16_t)arg_ptr[0] << 8) | (uint16_t)arg_ptr[1];
 
         if (sec >= 1 && sec <= 65535) {
@@ -916,8 +810,7 @@ static void process_command(const uint8_t *data, uint16_t len)
         return;
     }
 
-
-    /* === SA: 16 bajtova HEX – upiši u aktivni pattern kao 8 vrednosti === */
+    /* === SA: 16 bytes HEX — write to active pattern as 8 values === */
     else if (strcmp(cmd, "SA") == 0) {
         if (arg_len != 16) {
             printk("[CMD] SA rejected: arg_len=%u (expected 16)\n", (unsigned)arg_len);
@@ -932,17 +825,15 @@ static void process_command(const uint8_t *data, uint16_t len)
         }
 
         for (int i = 0; i < 8; ++i) {
-            /* Objedini 2 bajta u jedan uint16_t */
+            /* Combine 2 bytes into one uint16_t */
             uint16_t raw = ((uint16_t)arg_ptr[2*i] << 8) | arg_ptr[2*i + 1];
-
             pulse_patterns[number_patter][i] = raw;
-
             printk("[CMD] SA ch%d=0x%04X\n", i, raw);
         }
 
         printk("[CMD] SA applied to pattern #%u\n", (unsigned)number_patter);
 
-        /* Odgovor preko BLE sa HEX vrednostima */
+        /* Response via BLE with HEX values */
         char out[128];
         size_t pos = 0;
         pos += snprintk(out + pos, sizeof(out) - pos, ">SA;");
@@ -955,7 +846,7 @@ static void process_command(const uint8_t *data, uint16_t len)
         return;
     }
 
-
+    /* === XC: 16 bytes HEX — cross-channel amplitude configuration === */
     else if (strcmp(cmd, "XC") == 0) {
         if (arg_len != 16) {
             printk("[CMD] XC rejected: arg_len=%u (expected 16)\n", (unsigned)arg_len);
@@ -964,13 +855,13 @@ static void process_command(const uint8_t *data, uint16_t len)
         }
 
         for (int i = 0; i < 8; ++i) {
-            /* Objedini po 2 bajta u jedan uint16_t */
+            /* Combine 2 bytes into one uint16_t */
             uint16_t raw = ((uint16_t)arg_ptr[2*i] << 8) | arg_ptr[2*i + 1];
 
-            /* Skaliraj vrednost: deljenje sa 10 (npr. 3100 -> 310) */
+            /* Scale value: divide by 10 (e.g. 3100 -> 310) */
             uint16_t val = raw / 10;
 
-            /* Granice u µA – prilagodi po potrebi */
+            /* Limits in µA — adjust as needed */
             if (val < 5 || val > 2000) {
                 printk("[CMD] XC rejected: ch%d=%u out-of-range\n", i, val);
                 send_response(">XC;ERR<\r\n");
@@ -982,7 +873,7 @@ static void process_command(const uint8_t *data, uint16_t len)
 
         printk("[CMD] XC applied\n");
 
-        /* Ispis u decimalnom obliku */
+        /* Display in decimal form */
         char out[128];
         size_t pos = 0;
         pos += snprintk(out + pos, sizeof(out) - pos, ">XC;");
@@ -995,59 +886,141 @@ static void process_command(const uint8_t *data, uint16_t len)
         return;
     }
 
-
-
-
-    /* Ako je stigla neka druga komanda sa argumentima koju nismo definisali po novom protokolu */
+    /* If we received some other command with arguments not defined by new protocol */
     printk("[CMD] Unknown command with fixed-HEX args '%s' (len=%u)\n", cmd, (unsigned)arg_len);
     send_response(">ERR;UNKNOWN<\r\n");
-
-   
 }
 
+/* ============================================================================
+ * CONNECTION EVENT HANDLERS
+ * ============================================================================ */
 
+static void request_conn_param(struct k_work *work)
+{
+    ARG_UNUSED(work);
+    if (!current_conn) return;
 
+    int err = bt_conn_le_param_update(current_conn, &desired_param);
+    if (err) {
+        printk("bt_conn_le_param_update err=%d, retry in 3s\n", err);
+        /* If central rejects, try again later */
+        static struct k_work_delayable *self;
+        self = CONTAINER_OF(work, struct k_work_delayable, work);
+        k_work_reschedule(self, K_SECONDS(3));
+    } else {
+        printk("Conn param update requested\n");
+    }
+}
 
+/* Delayed work for requesting parameters after connection */
+static K_WORK_DELAYABLE_DEFINE(conn_param_work, request_conn_param);
 
+/* Function declarations */
+void bt_ready(int err);
+void connected(struct bt_conn *conn, uint8_t err);
+void disconnected(struct bt_conn *conn, uint8_t reason);
 
+/* BT connection event handlers */
+void connected(struct bt_conn *conn, uint8_t err)
+{
+    if (err) {
+        printk("BLE connection failed (err %u)\n", err);
+        return;
+    }
 
+    /* Remember connection for NUS TX */
+    current_conn = bt_conn_ref(conn);
 
+    /* Info about current parameters */
+    struct bt_conn_info info;
+    if (!bt_conn_get_info(conn, &info) && info.type == BT_CONN_TYPE_LE) {
+        printk("BLE connected: interval=%u*1.25ms latency=%u timeout=%u*10ms\n",
+               info.le.interval, info.le.latency, info.le.timeout);
+    } else {
+        printk("BLE connected\n");
+    }
 
+    /* LED ON */
+    gpio_pin_set_dt(&led1, 1);
 
-#include <zephyr/kernel.h>
-#include <zephyr/logging/log.h>
-LOG_MODULE_REGISTER(freq_sweep, LOG_LEVEL_INF);
+    /* After short delay request "healthier" parameters */
+    k_work_schedule(&conn_param_work, K_SECONDS(2));
+}
 
+void disconnected(struct bt_conn *conn, uint8_t reason)
+{
+    printk("BLE disconnected (reason 0x%02X)\n", reason);
+    /* 0x08 = Connection Timeout */
 
+    /* LED OFF */
+    gpio_pin_set_dt(&led1, 0);
 
-/* Trenutno stanje */
+    /* Release and clear state */
+    if (current_conn) {
+        bt_conn_unref(current_conn);
+        current_conn = NULL;
+    }
+    k_work_cancel_delayable(&conn_param_work);
+}
+
+static struct bt_conn_cb conn_callbacks = {
+    .connected = connected,
+    .disconnected = disconnected,
+};
+
+static struct bt_nus_cb nus_callbacks = {
+    .received = nus_cb,
+};
+
+void bt_ready(int err)
+{
+    if (err) {
+        printk("Bluetooth was not started successfully (err %d)\n", err);
+        return;
+    }
+
+    printk("Bluetooth ready, starting advertising...\n");
+
+    err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, NULL, 0, NULL, 0);
+    if (err) {
+        printk("Advertising not started (err %d)\n", err);
+    } else {
+        printk("BLE advertising active\n");
+    }
+}
+
+/* ============================================================================
+ * FREQUENCY CONTROL MODULE
+ * ============================================================================ */
+
+/* Current state */
 static uint8_t cur_freq = 0;
-static int dir = +1;  /* smer promena: +1 ili -1 */
+static int dir = +1;  /* direction: +1 or -1 */
 
-/* --- Helper: postavi frekvenciju --- */
+/* Helper: set frequency safely */
 static void set_frequency_safe(uint8_t f_hz)
 {
     frequency     = f_hz;
     new_frequency = 1;
-    LOG_INF("[FREQ] set %u Hz", f_hz);
+    LOG_INF("FREQ set %u Hz", f_hz);
 }
 
-/* --- Work koji menja frekvenciju --- */
+/* Work that changes frequency */
 static void freq_work_handler(struct k_work *work);
 K_WORK_DEFINE(freq_work, freq_work_handler);
 
-/* --- Tajmer koji trigeruje work --- */
+/* Timer that triggers work */
 static void freq_timer_handler(struct k_timer *timer)
 {
     k_work_submit(&freq_work);
 }
 K_TIMER_DEFINE(freq_timer, freq_timer_handler, NULL);
 
-/* --- Work logika (menjanje frekvencije) --- */
+/* Work logic (frequency changing) */
 static void freq_work_handler(struct k_work *work)
 {
     if (!stimulation_running) {
-        /* Ako stimulacija nije ON, ne radi ništa */
+        /* If stimulation is not ON, do nothing */
         return;
     }
 
@@ -1055,7 +1028,7 @@ static void freq_work_handler(struct k_work *work)
     uint8_t end   = freq_end;
     uint8_t dur_s = freq_dur;
 
-    /* Normalizacija */
+    /* Normalization */
     if (start < 1) start = 1;
     if (start > 100) start = 100;
     if (end   < 1) end   = 1;
@@ -1067,16 +1040,16 @@ static void freq_work_handler(struct k_work *work)
         return;
     }
 
-    /* Ako prvi put ulazimo, inicijalizuj */
+    /* If entering for first time, initialize */
     if (cur_freq == 0) {
         cur_freq = start;
         dir = (start <= end) ? +1 : -1;
     }
 
-    /* Postavi trenutnu vrednost */
+    /* Set current value */
     set_frequency_safe(cur_freq);
 
-    /* Izračunaj sledeću */
+    /* Calculate next */
     if (dir > 0) {
         if (cur_freq < end) cur_freq++;
         else cur_freq = start;  /* wrap */
@@ -1085,19 +1058,19 @@ static void freq_work_handler(struct k_work *work)
         else cur_freq = start;  /* wrap */
     }
 
-    /* Restart tajmera za sledeći step */
+    /* Restart timer for next step */
     k_timer_start(&freq_timer, K_SECONDS(dur_s), K_NO_WAIT);
 }
 
-/* --- API koji pokreće sweep ili constant --- */
+/* API that starts sweep or constant */
 void freq_control_start(void)
 {
     cur_freq = 0;  /* reset */
     if (!freq_sweep || freq_dur == 0) {
-        /* Constant: odmah setuj frekvenciju */
+        /* Constant: immediately set frequency */
         set_frequency_safe(freq_start);
     } else {
-        /* Spokreni tajmer */
+        /* Start timer */
         k_timer_start(&freq_timer, K_NO_WAIT, K_NO_WAIT);
     }
 }
@@ -1108,64 +1081,39 @@ void freq_control_stop(void)
     cur_freq = 0;
 }
 
+/* ============================================================================
+ * INITIALIZATION
+ * ============================================================================ */
 
-
-
-/**
- * @brief Validira i postavlja novu frekvenciju i širinu impulsa.
- *
- * @param freq_hz       Tražena frekvencija [Hz]
- * @param pulse_width_us Širina impulsa [µs]
- * @return int  0 = OK, -EINVAL = van granica
- */
-int set_freq_and_pw(uint8_t freq_hz, uint16_t pulse_width_us)
+int ble_nus_init(void)
 {
-    /* Tabela maksimalnih frekvencija po širini impulsa */
-    struct {
-        uint16_t pw_us;
-        uint8_t  max_hz;
-    } limits[] = {
-        {1000, 66},
-        { 950, 69},
-        { 900, 70},
-        { 850, 73},
-        { 800, 74},
-        { 750, 77},
-        { 700, 79},
-        { 650, 83},
-        { 600, 84},
-        { 550, 88},
-        { 500, 91},
-        { 450, 95},
-        { 400, 98},
-    };
+    int err;
 
-    uint8_t allowed_max = 100;
-
-    if (pulse_width_us >= 1000) {
-        allowed_max = 66;
-    } else if (pulse_width_us < 400) {
-        allowed_max = 100; /* 1–100 dozvoljeno */
-    } else {
-        for (int i = 0; i < ARRAY_SIZE(limits); i++) {
-            if (pulse_width_us >= limits[i].pw_us) {
-                allowed_max = limits[i].max_hz;
-                break;
-            }
-        }
+    err = bt_enable(bt_ready);
+    if (err) {
+        printk("Bluetooth enable failed (err %d)\n", err);
+        return err;
     }
 
-    if (freq_hz > allowed_max) {
-        LOG_ERR("[FREQ] REJECT: freq=%u Hz, pw=%u us (max=%u Hz)",
-                freq_hz, pulse_width_us, allowed_max);
-        return -EINVAL;
+    if (!device_is_ready(led1.port)) {
+        printk("LED1 device not ready\n");
+        return -ENODEV;
+    }
+    
+    /* Properly configure LED as output and turn it off */
+    err = gpio_pin_configure_dt(&led1, GPIO_OUTPUT_INACTIVE);
+    if (err) {
+        printk("LED1 config failed (err %d)\n", err);
+        return err;
     }
 
-    /* Ako je sve u redu -> upiši globalne promenljive */
-    frequency     = freq_hz;
-    pulse_width   = pulse_width_us;
-    new_frequency = 1;
+    bt_conn_cb_register(&conn_callbacks);
 
-    LOG_INF("[FREQ] ACCEPT: freq=%u Hz, pw=%u us", freq_hz, pulse_width_us);
+    err = bt_nus_init(&nus_callbacks);
+    if (err) {
+        printk("NUS service not initialized (err %d)\n", err);
+        return err;
+    }
+
     return 0;
 }

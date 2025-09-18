@@ -61,26 +61,8 @@ int ble_nus_init(void);
  */
 void send_response(const char *msg);
 
-/**
- * @brief Parses and processes an ASCII command string received over BLE.
- *
- * Accepts commands in the format "XX;NN", where:
- * - "XX" is a two-character command identifier (e.g., "ST", "SA", "SF", "SW", "HT"),
- * - ";" is the separator,
- * - "NN" is a numeric value in decimal (1–3 digits).
- *
- * Supported commands:
- * - "ST": Sets `stim_state`   → values: 0–3
- * - "SA": Sets `amplitude`    → values: 1–30
- * - "SF": Sets `frequency`    → values: 1–40 Hz
- * - "SW": Sets `pulse_width`  → values: 1–10
- * - "HT": Sets `temperature`  → values: 25–42 °C
- *
- * Sends `OK_MSG` on success, or `ERR_MSG` if the command or value is invalid.
- *
- * @param data Pointer to the received byte array.
- * @param len Length of the received data.
- */
+
+
 static void process_command(const uint8_t *data, uint16_t len);
 
 #ifdef __cplusplus
