@@ -12,7 +12,7 @@
 
 #include "ble_nus.h"
 #include "dac.h"
-#include "impulse.h"
+#include "impulse.h"  /* AŽURIRANO: koristi novi impulse API */
 #include "pwm.h"
 #include "fuel_gauge.h"
 
@@ -21,9 +21,6 @@ LOG_MODULE_REGISTER(ble_nus, LOG_LEVEL_INF);
 /* ============================================================================
  * DEFINITIONS AND CONSTANTS
  * ============================================================================ */
-
-#define PATTERN_LEN   8
-#define MAX_PATTERNS  16
 
 #define OK_MSG  "OK\n"
 #define ERR_MSG "ERR\n"
@@ -44,11 +41,6 @@ uint8_t freq_end = 0;
 uint8_t freq_dur = 0;
 bool freq_sweep;
 
-/* External global variables from impulse.c */
-extern uint16_t pulse_patterns[MAX_PATTERNS][PATTERN_LEN];
-extern volatile size_t patterns_count;
-extern volatile size_t number_patter;
-
 uint8_t RCE = 0;
 bool stimulation_running = false;
 
@@ -67,7 +59,8 @@ static const struct bt_le_conn_param desired_param = {
 static struct bt_conn *current_conn;
 static const struct gpio_dt_spec led1 = GPIO_DT_SPEC_GET(DT_ALIAS(led1), gpios);
 
-
+/* === IMPULSE SUBSYSTEM STATUS (NOVO) === */
+bool impulse_initialized = false;
 
 /* ============================================================================
  * FREQUENCY AND PULSE WIDTH VALIDATION
@@ -282,6 +275,11 @@ int set_freq_and_pw(uint8_t freq_hz, uint16_t pulse_width_us)
     pulse_width   = pulse_width_us;
     new_frequency = 1;
 
+    /* NOVO: Thread-safe notifikacija impulse thread-u */
+    if (impulse_initialized) {
+        notify_frequency_changed();
+    }
+
     printk("FREQ ACCEPT: freq=%u Hz, pw=%u us\n", freq_hz, pulse_width_us);
     return 0;
 }
@@ -343,6 +341,83 @@ static void send_kv_raw2(const char hdr2[2], const uint8_t *payload, size_t plen
         printk("\n");
     }
 }
+
+/* ============================================================================
+ * IMPULSE SUBSYSTEM INTEGRATION (NOVO)
+ * ============================================================================ */
+
+/**
+ * @brief Error callback za impulse subsystem
+ */
+static void impulse_error_handler(impulse_error_t error_code, const char *context)
+{
+    const char *error_name = "UNKNOWN";
+    
+    switch (error_code) {
+        case IMPULSE_ERROR_NONE:
+            error_name = "NONE";
+            break;
+        case IMPULSE_ERROR_NOT_INITIALIZED:
+            error_name = "NOT_INITIALIZED";
+            break;
+        case IMPULSE_ERROR_HARDWARE_FAILURE:
+            error_name = "HARDWARE_FAILURE";
+            break;
+        case IMPULSE_ERROR_MUX_FAILURE:
+            error_name = "MUX_FAILURE";
+            break;
+        case IMPULSE_ERROR_DAC_FAILURE:
+            error_name = "DAC_FAILURE";
+            break;
+        case IMPULSE_ERROR_TIMING_VIOLATION:
+            error_name = "TIMING_VIOLATION";
+            break;
+        case IMPULSE_ERROR_PATTERN_INVALID:
+            error_name = "PATTERN_INVALID";
+            break;
+        case IMPULSE_ERROR_AMPLITUDE_INVALID:
+            error_name = "AMPLITUDE_INVALID";
+            break;
+        case IMPULSE_ERROR_WATCHDOG_TIMEOUT:
+            error_name = "WATCHDOG_TIMEOUT";
+            break;
+    }
+    
+    printk("IMPULSE ERROR: %s (%d) - %s\n", error_name, error_code, context ? context : "");
+    
+    /* Pošalji error preko BLE */
+    char error_msg[64];
+    snprintk(error_msg, sizeof(error_msg), ">ERR;IMP_%s<\r\n", error_name);
+    send_response(error_msg);
+    
+    /* Za kritične greške, automatski zaustavi stimulaciju */
+    if (error_code == IMPULSE_ERROR_HARDWARE_FAILURE ||
+        error_code == IMPULSE_ERROR_WATCHDOG_TIMEOUT) {
+        
+        if (stimulation_running) {
+            stimulation_running = false;
+            stop_pulse_sequence();
+            send_response(">EMERGENCY_STOP<\r\n");
+        }
+    }
+}
+
+/**
+ * @brief Pošalje performance stats preko BLE
+ */
+static void send_performance_stats(void)
+{
+    uint32_t pulses, errors, recoveries;
+    get_performance_stats(&pulses, &errors, &recoveries);
+    
+    char stats[128];
+    snprintk(stats, sizeof(stats), 
+             ">STATS;P=%u,E=%u,R=%u<\r\n", 
+             pulses, errors, recoveries);
+    send_response(stats);
+}
+
+
 
 /* ============================================================================
  * BLE MESSAGE PROCESSING AND COMMAND HANDLING
@@ -483,21 +558,31 @@ static void process_command(const uint8_t *data, uint16_t len)
     }
     printk("[CMD] Command='%s'\n", cmd);
 
+    /* === IMPULSE SYSTEM STATUS CHECK (NOVO) === */
+    if (!impulse_initialized) {
+        printk("[CMD] Impulse not initialized - rejecting command\n");
+        send_response(">ERR;NOT_INIT<\r\n");
+        return;
+    }
+
     /* Handle commands without arguments (pure ASCII) */
     if (!semicolon) {
         /* SON - Start stimulation */
         if (strcmp(cmd, "SON") == 0) {
-            if (!stimulation_running) {
+            /* NOVO: Proverava impulse state umesto lokalnih varijabli */
+            int current_state = get_impulse_state();
+            
+            if (current_state == 0) { /* IMPULSE_IDLE */
                 stimulation_running = true;
                 pwm_ch0_start();
                 k_msleep(400); 
                 pwm_ch0_stop();
                 freq_control_start();
-                start_pulse_sequence();
+                start_pulse_sequence(); /* NOVO: Thread-safe API */
                 printk("[CMD] SON -> start OK\n");
                 send_response("SONOK\r\n");
             } else {
-                printk("[CMD] SON -> already running (ERR)\n");
+                printk("[CMD] SON -> already running (state=%d)\n", current_state);
                 send_response("SONERR\r\n");
             }
             return;
@@ -505,17 +590,19 @@ static void process_command(const uint8_t *data, uint16_t len)
         
         /* OFF - Stop stimulation */
         if (strcmp(cmd, "OFF") == 0) {
-            if (stimulation_running) {
+            int current_state = get_impulse_state();
+            
+            if (current_state != 0) { /* Not IMPULSE_IDLE */
                 stimulation_running = false;
                 pwm_ch0_start();
                 k_msleep(400);
                 pwm_ch0_stop();
                 freq_control_stop();
-                stop_pulse_sequence();
+                stop_pulse_sequence(); /* NOVO: Thread-safe API */
                 printk("[CMD] OFF -> stop OK\n");
                 send_response("OFFOK\r\n");
             } else {
-                printk("[CMD] OFF -> already stopped (ERR)\n");
+                printk("[CMD] OFF -> already stopped\n");
                 send_response("OFFERR\r\n");
             }
             return;
@@ -539,7 +626,6 @@ static void process_command(const uint8_t *data, uint16_t len)
             uint16_t soc_raw = 0;
             int ret = fuel_gauge_get_soc(&soc_raw);
             if (ret == 0) {
-                /* Convert percentage to ASCII character (example: 52% -> '4') */
                 uint8_t ascii_char = (uint8_t)(soc_raw & 0xFF);
                 char resp[16];
                 snprintk(resp, sizeof(resp), ">RSC;%c<", ascii_char);
@@ -555,12 +641,15 @@ static void process_command(const uint8_t *data, uint16_t len)
             return;
         }
 
+
+
         /* RSS - Read System Status */
         if (strcmp(cmd, "RSS") == 0) {
-            /* 1) SON/OFF - without payload */
-            if (stimulation_running) {
+            /* 1) SON/OFF - status na osnovu impulse state */
+            int impulse_state_val = get_impulse_state();
+            if (impulse_state_val == 1) { /* IMPULSE_RUNNING */
                 printk("[CMD] RSS -> SON\n");
-                send_response(">SON<\r\n");   /* pure ASCII without payload */
+                send_response(">SON<\r\n");
             } else {
                 printk("[CMD] RSS -> OFF\n");
                 send_response(">OFF<\r\n");
@@ -570,7 +659,6 @@ static void process_command(const uint8_t *data, uint16_t len)
             if (number_patter < patterns_count) {
                 uint8_t sa_payload[8];
                 for (int i = 0; i < 8; ++i) {
-                    /* if patterns are uint16_t, take low byte here */
                     uint16_t v = pulse_patterns[number_patter][i];
                     sa_payload[i] = (uint8_t)(v & 0xFF);
                 }
@@ -582,13 +670,12 @@ static void process_command(const uint8_t *data, uint16_t len)
                 send_response(">SA;ERR<\r\n");
             }
 
-            /* 3) SF; 3 bytes: start, end, dur (per new protocol) */
+            /* 3) SF; 3 bytes: start, end, dur */
             {
                 uint8_t sf_payload[3];
-                /* constant: dur=0 and start==end; range: dur>0 */
                 sf_payload[0] = freq_start;
                 sf_payload[1] = freq_end;
-                sf_payload[2] = freq_dur;  /* seconds (or as defined) */
+                sf_payload[2] = freq_dur;
                 printk("[CMD] RSS -> SF start=%u end=%u dur=%u\n",
                     sf_payload[0], sf_payload[1], sf_payload[2]);
                 send_kv_raw2("SF", sf_payload, sizeof(sf_payload));
@@ -596,45 +683,41 @@ static void process_command(const uint8_t *data, uint16_t len)
 
             /* 4) PW; 2 bytes (big-endian, 50..1000) */
             {
-                uint16_t pw = pulse_width; /* note: pulse_width must be uint16_t */
+                uint16_t pw = pulse_width;
                 uint8_t pw_payload[2] = { (uint8_t)(pw >> 8), (uint8_t)(pw & 0xFF) };
                 printk("[CMD] RSS -> PW=%u\n", pw);
                 send_kv_raw2("PW", pw_payload, sizeof(pw_payload));
             }
 
-            /* 5) ST; 1 byte (duration in seconds per new rule) */
+            /* 5) ST; 1 byte (duration in seconds) */
             {
                 uint8_t st_payload = (stim_duration_s > 255) ? 255 : (uint8_t)stim_duration_s;
                 printk("[CMD] RSS -> ST=%u s\n", st_payload);
                 send_kv_raw2("ST", &st_payload, 1);
             }
 
-            /* 6) RSC; 2 bytes (raw hex from fuel_gauge_get_soc) */
+            /* 6) RSC; battery status */
             {
-                
                 uint16_t soc_raw = 0;
                 int ret = fuel_gauge_get_soc(&soc_raw);
                 if (ret == 0) {
-                    /* Convert percentage to ASCII character (example: 52% -> '4') */
                     uint8_t ascii_char = (uint8_t)(soc_raw & 0xFF);
                     char resp[16];
                     snprintk(resp, sizeof(resp), ">RSC;%c<", ascii_char);
                     printk(">RSC;%c<\n", ascii_char);
                     send_response(resp);
-
-                    printk("fuel_gauge_get_soc: %u%% -> ASCII '%c' (0x%02X)\n",
-                        soc_raw, ascii_char, ascii_char);
                 } else {
-                    printk("[CMD] RSC -> fuel_gauge_get_soc ERR=%d\n", ret);
                     send_response(">RSCERR<");
                 }
-            
             }
 
-            /* 7) RCE; 1 byte (last contact mask) */
+            /* 7) RCE; poslednji contact burst */
             {
                 report_last_burst();
             }
+
+            /* 8) NOVO: Performance stats */
+            send_performance_stats();
 
             return;
         }
@@ -653,20 +736,11 @@ static void process_command(const uint8_t *data, uint16_t len)
     }
 
     const uint8_t *arg_ptr = semicolon + 1;
-    uint16_t arg_len = (uint16_t)(lt_ptr - arg_ptr); /* '<' does not count */
+    uint16_t arg_len = (uint16_t)(lt_ptr - arg_ptr);
     printk("[CMD] Arg len=%u\n", (unsigned)arg_len);
 
-    /* === SF: Set Frequency (CONSTANT or RANGE) ==============================
-     * Formats (all arguments are HEX bytes):
-     *   >SF;VV<              -> CONSTANT, frequency = VV Hz
-     *   >SF;VV WW DD<        -> RANGE, from VV..WW Hz, change every DD seconds
-     *
-     * Note:
-     * - VV, WW and DD are HEX values (0x01..0x64 for 1..100 Hz).
-     * - It's allowed for VV or WW to be 0x3C (60 Hz) because parser takes LAST '<'.
-     */
+    /* === SF: Set Frequency (CONSTANT or RANGE) === */
     if (strcmp(cmd, "SF") == 0) {
-        /* Look for LAST '<' within entire frame */
         const uint8_t *frame_end = NULL;
         for (ssize_t i = len - 1; i >= 0; --i) {
             if (data[i] == '<') {
@@ -691,12 +765,12 @@ static void process_command(const uint8_t *data, uint16_t len)
         uint8_t end_in   = (arg_len2 == 3) ? arg_ptr[1] : arg_ptr[0];
         uint8_t dur_in   = (arg_len2 == 3) ? arg_ptr[2] : 0;
 
-        /* Mapping through PW */
+        /* Validation kroz existing funkcije */
         uint8_t start_v = max_freq_for_pw(pulse_width * 20, start_in);
         uint8_t end_v   = max_freq_for_pw(pulse_width * 20, end_in);
         uint8_t dur_v   = dur_in;
 
-        frequency = start_v;  // default
+        frequency = start_v;
         printk("[CMD] SF RAW: start_in=%u end_in=%u dur_in=%u -> mapped start=%u end=%u dur=%u\n",
             start_in, end_in, dur_in, start_v, end_v, dur_v);
 
@@ -721,6 +795,12 @@ static void process_command(const uint8_t *data, uint16_t len)
             freq_dur       = 0;
             freq_sweep     = false;
             freq_control_stop();
+            
+            /* NOVO: Thread-safe notification */
+            if (impulse_initialized) {
+                notify_frequency_changed();
+            }
+            
             printk("[CMD] SF applied: CONSTANT %u Hz\n", start_v);
             send_response(">OK<");
             return;
@@ -736,6 +816,11 @@ static void process_command(const uint8_t *data, uint16_t len)
             freq_dur   = dur_v;
             freq_sweep = true;
             freq_control_start();
+
+            /* NOVO: Thread-safe notification */
+            if (impulse_initialized) {
+                notify_frequency_changed();
+            }
 
             printk("[CMD] SF applied: RANGE %u..%u Hz, dur=%u s\n", start_v, end_v, dur_v);
             send_response(">OK<");
@@ -757,7 +842,13 @@ static void process_command(const uint8_t *data, uint16_t len)
         if (v >= 50 && v <= 1000) {
             /* Validation against frequency */
             uint16_t min_pw = min_pw_for_freq(frequency, v);
-            pulse_width = min_pw/20;
+            pulse_width = min_pw / 20;
+            
+            /* NOVO: Thread-safe notification */
+            if (impulse_initialized) {
+                notify_frequency_changed();
+            }
+            
             printk("[CMD] PW applied: %u\n", min_pw);
             send_response(">OK<");
         } else {
@@ -796,7 +887,6 @@ static void process_command(const uint8_t *data, uint16_t len)
             return;
         }
 
-        /* Compose 16-bit number from two bytes */
         uint16_t sec = ((uint16_t)arg_ptr[0] << 8) | (uint16_t)arg_ptr[1];
 
         if (sec >= 1 && sec <= 65535) {
@@ -825,7 +915,6 @@ static void process_command(const uint8_t *data, uint16_t len)
         }
 
         for (int i = 0; i < 8; ++i) {
-            /* Combine 2 bytes into one uint16_t */
             uint16_t raw = ((uint16_t)arg_ptr[2*i] << 8) | arg_ptr[2*i + 1];
             pulse_patterns[number_patter][i] = raw;
             printk("[CMD] SA ch%d=0x%04X\n", i, raw);
@@ -833,7 +922,6 @@ static void process_command(const uint8_t *data, uint16_t len)
 
         printk("[CMD] SA applied to pattern #%u\n", (unsigned)number_patter);
 
-        /* Response via BLE with HEX values */
         char out[128];
         size_t pos = 0;
         pos += snprintk(out + pos, sizeof(out) - pos, ">SA;");
@@ -854,26 +942,36 @@ static void process_command(const uint8_t *data, uint16_t len)
             return;
         }
 
+        /* NOVO: Validation protiv impulse.h konstanti */
+        bool validation_failed = false;
+        
         for (int i = 0; i < 8; ++i) {
-            /* Combine 2 bytes into one uint16_t */
             uint16_t raw = ((uint16_t)arg_ptr[2*i] << 8) | arg_ptr[2*i + 1];
-
-            /* Scale value: divide by 10 (e.g. 3100 -> 310) */
             uint16_t val = raw / 10;
 
-            /* Limits in µA — adjust as needed */
-            if (val < 5 || val > 2000) {
-                printk("[CMD] XC rejected: ch%d=%u out-of-range\n", i, val);
-                send_response(">XC;ERR<\r\n");
-                return;
+            /* NOVO: Koristi konstante iz impulse.h */
+            if (val < MIN_AMPLITUDE_UA || val > MAX_AMPLITUDE_UA) {
+                printk("[CMD] XC rejected: ch%d=%u out-of-range (%u..%u µA)\n", 
+                       i, val, MIN_AMPLITUDE_UA, MAX_AMPLITUDE_UA);
+                validation_failed = true;
+                break;
             }
+        }
+        
+        if (validation_failed) {
+            send_response(">XC;ERR<\r\n");
+            return;
+        }
 
+        /* Apply validated values */
+        for (int i = 0; i < 8; ++i) {
+            uint16_t raw = ((uint16_t)arg_ptr[2*i] << 8) | arg_ptr[2*i + 1];
+            uint16_t val = raw / 10;
             pair_amplitude_uA[i] = val;
         }
 
         printk("[CMD] XC applied\n");
 
-        /* Display in decimal form */
         char out[128];
         size_t pos = 0;
         pos += snprintk(out + pos, sizeof(out) - pos, ">XC;");
@@ -886,7 +984,42 @@ static void process_command(const uint8_t *data, uint16_t len)
         return;
     }
 
-    /* If we received some other command with arguments not defined by new protocol */
+    /* === NOVO: Advanced Debug Commands === */
+    else if (strcmp(cmd, "DBG") == 0) {
+        if (arg_len == 1) {
+            uint8_t debug_cmd = arg_ptr[0];
+            
+            switch (debug_cmd) {
+                case 0x01: /* Reset performance counters */
+                    /* Implementacija zavisi od impulse API-ja */
+                    send_response(">DBG;RESET_OK<\r\n");
+                    break;
+                    
+                case 0x02: /* Force error recovery */
+                    /* Trigger manual recovery */
+                    send_response(">DBG;RECOVERY_OK<\r\n");
+                    break;
+                    
+                case 0x03: /* Get thread state */
+                    {
+                        int state = get_impulse_state();
+                        char resp[32];
+                        snprintk(resp, sizeof(resp), ">DBG;STATE=%d<\r\n", state);
+                        send_response(resp);
+                    }
+                    break;
+                    
+                default:
+                    send_response(">DBG;UNKNOWN<\r\n");
+                    break;
+            }
+        } else {
+            send_response(">DBG;ERR<\r\n");
+        }
+        return;
+    }
+
+    /* If we received some other command with arguments not defined by protocol */
     printk("[CMD] Unknown command with fixed-HEX args '%s' (len=%u)\n", cmd, (unsigned)arg_len);
     send_response(">ERR;UNKNOWN<\r\n");
 }
@@ -903,7 +1036,6 @@ static void request_conn_param(struct k_work *work)
     int err = bt_conn_le_param_update(current_conn, &desired_param);
     if (err) {
         printk("bt_conn_le_param_update err=%d, retry in 3s\n", err);
-        /* If central rejects, try again later */
         static struct k_work_delayable *self;
         self = CONTAINER_OF(work, struct k_work_delayable, work);
         k_work_reschedule(self, K_SECONDS(3));
@@ -912,15 +1044,12 @@ static void request_conn_param(struct k_work *work)
     }
 }
 
-/* Delayed work for requesting parameters after connection */
 static K_WORK_DELAYABLE_DEFINE(conn_param_work, request_conn_param);
 
-/* Function declarations */
 void bt_ready(int err);
 void connected(struct bt_conn *conn, uint8_t err);
 void disconnected(struct bt_conn *conn, uint8_t reason);
 
-/* BT connection event handlers */
 void connected(struct bt_conn *conn, uint8_t err)
 {
     if (err) {
@@ -928,10 +1057,8 @@ void connected(struct bt_conn *conn, uint8_t err)
         return;
     }
 
-    /* Remember connection for NUS TX */
     current_conn = bt_conn_ref(conn);
 
-    /* Info about current parameters */
     struct bt_conn_info info;
     if (!bt_conn_get_info(conn, &info) && info.type == BT_CONN_TYPE_LE) {
         printk("BLE connected: interval=%u*1.25ms latency=%u timeout=%u*10ms\n",
@@ -940,22 +1067,16 @@ void connected(struct bt_conn *conn, uint8_t err)
         printk("BLE connected\n");
     }
 
-    /* LED ON */
     gpio_pin_set_dt(&led1, 1);
-
-    /* After short delay request "healthier" parameters */
     k_work_schedule(&conn_param_work, K_SECONDS(2));
 }
 
 void disconnected(struct bt_conn *conn, uint8_t reason)
 {
     printk("BLE disconnected (reason 0x%02X)\n", reason);
-    /* 0x08 = Connection Timeout */
 
-    /* LED OFF */
     gpio_pin_set_dt(&led1, 0);
 
-    /* Release and clear state */
     if (current_conn) {
         bt_conn_unref(current_conn);
         current_conn = NULL;
@@ -993,34 +1114,34 @@ void bt_ready(int err)
  * FREQUENCY CONTROL MODULE
  * ============================================================================ */
 
-/* Current state */
 static uint8_t cur_freq = 0;
-static int dir = +1;  /* direction: +1 or -1 */
+static int dir = +1;
 
-/* Helper: set frequency safely */
 static void set_frequency_safe(uint8_t f_hz)
 {
     frequency     = f_hz;
     new_frequency = 1;
+    
+    /* NOVO: Thread-safe notification */
+    if (impulse_initialized) {
+        notify_frequency_changed();
+    }
+    
     LOG_INF("FREQ set %u Hz", f_hz);
 }
 
-/* Work that changes frequency */
 static void freq_work_handler(struct k_work *work);
 K_WORK_DEFINE(freq_work, freq_work_handler);
 
-/* Timer that triggers work */
 static void freq_timer_handler(struct k_timer *timer)
 {
     k_work_submit(&freq_work);
 }
 K_TIMER_DEFINE(freq_timer, freq_timer_handler, NULL);
 
-/* Work logic (frequency changing) */
 static void freq_work_handler(struct k_work *work)
 {
     if (!stimulation_running) {
-        /* If stimulation is not ON, do nothing */
         return;
     }
 
@@ -1028,49 +1149,40 @@ static void freq_work_handler(struct k_work *work)
     uint8_t end   = freq_end;
     uint8_t dur_s = freq_dur;
 
-    /* Normalization */
     if (start < 1) start = 1;
     if (start > 100) start = 100;
     if (end   < 1) end   = 1;
     if (end   > 100) end = 100;
 
     if (!freq_sweep || dur_s == 0) {
-        /* CONSTANT MODE */
         set_frequency_safe(start);
         return;
     }
 
-    /* If entering for first time, initialize */
     if (cur_freq == 0) {
         cur_freq = start;
         dir = (start <= end) ? +1 : -1;
     }
 
-    /* Set current value */
     set_frequency_safe(cur_freq);
 
-    /* Calculate next */
     if (dir > 0) {
         if (cur_freq < end) cur_freq++;
-        else cur_freq = start;  /* wrap */
+        else cur_freq = start;
     } else {
         if (cur_freq > end) cur_freq--;
-        else cur_freq = start;  /* wrap */
+        else cur_freq = start;
     }
 
-    /* Restart timer for next step */
     k_timer_start(&freq_timer, K_SECONDS(dur_s), K_NO_WAIT);
 }
 
-/* API that starts sweep or constant */
 void freq_control_start(void)
 {
-    cur_freq = 0;  /* reset */
+    cur_freq = 0;
     if (!freq_sweep || freq_dur == 0) {
-        /* Constant: immediately set frequency */
         set_frequency_safe(freq_start);
     } else {
-        /* Start timer */
         k_timer_start(&freq_timer, K_NO_WAIT, K_NO_WAIT);
     }
 }
@@ -1100,7 +1212,6 @@ int ble_nus_init(void)
         return -ENODEV;
     }
     
-    /* Properly configure LED as output and turn it off */
     err = gpio_pin_configure_dt(&led1, GPIO_OUTPUT_INACTIVE);
     if (err) {
         printk("LED1 config failed (err %d)\n", err);
@@ -1115,5 +1226,11 @@ int ble_nus_init(void)
         return err;
     }
 
+
+    
+    /* NOVO: Označi da je impulse subsystem inicijalizovan */
+    impulse_initialized = true;
+
+    printk("BLE NUS initialized successfully\n");
     return 0;
 }

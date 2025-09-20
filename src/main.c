@@ -119,6 +119,11 @@ void main(void)
 
     gpio_pin_set_dt(&kill, 0);   /* enable kroz LTC2950 (active-low linija) */
     gpio_pin_set_dt(&pb_mcu, 0); /* PB_MCU neaktivan */
+/* Mora biti pre ble_nus_init() */
+    if (impulse_init() != 0) {
+        printk("Impulse init failed!\n");
+        return -1;
+    }
 
     /* --- Ostali GPIO pinovi (stim) --- */
     if (init_gpios() != 0) {
