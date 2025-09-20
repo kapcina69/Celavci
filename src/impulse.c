@@ -53,6 +53,9 @@ static uint8_t rce_count = 0;       // koliko impulsa je očitano (0..8)
 static uint8_t rce_mask  = 0;       // 8-bit maska rezultata
 #define RCE_THRESHOLD_MV 100        // prag 100 mV
 
+/* Korektivna vrednost*/
+#define FREQ_CORRECT 7000
+
 static uint8_t RCE_FIRST = 0;  
 
 /* Kontrola rada */
@@ -308,7 +311,7 @@ static void impulse_thread(void *a, void *b, void *c)
         }
 
         
-        k_usleep(T_block_us-group_elapsed_us-7000);
+        k_usleep(T_block_us-group_elapsed_us-FREQ_CORRECT);
 
         /* spremi se za sledeću grupu; brojanje unutar grupe resetuješ po želji */
         number_of_pulses = 0;
